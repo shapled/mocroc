@@ -27,6 +27,10 @@ type SendTab struct {
 	crocManager *crocmgr.Manager
 	window      fyne.Window
 
+	// 回调函数
+	onNavigateToDetail func()
+	onUpdateDetail    func(state string, progress float64, message string)
+
 	// UI 组件
 	modeRadio         *widget.RadioGroup
 	fileContent       *fyne.Container
@@ -74,6 +78,32 @@ func NewSendTab(crocManager *crocmgr.Manager, window fyne.Window) *SendTab {
 	return tab
 }
 
+func (tab *SendTab) SetOnNavigateToDetail(callback func()) {
+	tab.onNavigateToDetail = callback
+}
+
+func (tab *SendTab) SetOnUpdateDetail(callback func(state string, progress float64, message string)) {
+	tab.onUpdateDetail = callback
+}
+
+// GetSendData 获取发送数据用于详情页
+func (tab *SendTab) GetSendData() (fileName string, code string, isText bool) {
+	if tab.currentMode == sendTextMode {
+		fileName = "文本内容"
+		isText = true
+	} else if len(tab.selectedFiles) > 0 {
+		fileName = filepath.Base(tab.selectedFiles[0])
+		isText = false
+	}
+	code = tab.codePhrase
+	return
+}
+
+// GetIsTransferring 获取传输状态
+func (tab *SendTab) GetIsTransferring() bool {
+	return tab.isTransferring
+}
+
 func (tab *SendTab) createWidgets() {
 	// --- File Widgets ---
 	tab.fileList = widget.NewList(
@@ -91,11 +121,13 @@ func (tab *SendTab) createWidgets() {
 			btn.OnTapped = func() { tab.deleteFile(id) }
 		},
 	)
+	tab.fileList.Resize(fyne.NewSize(400, 200)) // 设置最小高度
 	tab.addFilesBtn = widget.NewButtonWithIcon("选择文件或文件夹", theme.FileIcon(), tab.onAddFiles)
 
 	// --- Text Widgets ---
 	tab.textEntry = widget.NewMultiLineEntry()
 	tab.textEntry.SetPlaceHolder("输入要发送的文本内容...")
+	tab.textEntry.Resize(fyne.NewSize(400, 150)) // 设置一个合适的高度
 	tab.textEntry.OnChanged = func(s string) {
 		tab.sendText = s
 		tab.updateSendButton()
@@ -191,10 +223,13 @@ func (tab *SendTab) buildContent() {
 	tab.postSendCard.Hide()
 
 	// --- Final Layout ---
-	tab.content = container.NewVScroll(container.NewVBox(
+	mainContent := container.NewVBox(
 		tab.preSendCard,
 		tab.postSendCard,
-	))
+	)
+
+	// 使用边框布局让内容能够更好地填充空间
+	tab.content = container.NewScroll(mainContent)
 
 	// Set initial state after all content is built
 	tab.modeRadio.SetSelected(sendFileMode)
@@ -264,25 +299,23 @@ func (tab *SendTab) onSend() {
 		return
 	}
 
-	tab.isTransferring = true
-	tab.preSendCard.Hide()
-	tab.postSendCard.Show()
-	tab.progressBar.SetValue(0.0)
-	tab.statusLabel.SetText("正在初始化...")
-
+	// 生成接收码
 	code, err := tab.generateCode()
 	if err != nil {
-		fyne.Do(func() {
-			tab.statusLabel.SetText("生成接收码失败: " + err.Error())
-			tab.resetSendState()
-		})
+		tab.statusLabel.SetText("生成接收码失败: " + err.Error())
 		return
 	}
 	tab.codePhrase = code
-	fyne.Do(func() {
-		tab.codeLabel.SetText("接收码: " + code)
-	})
 
+	// 先导航到详情页（此时状态还是 Idle，允许导航）
+	if tab.onNavigateToDetail != nil {
+		tab.onNavigateToDetail()
+	}
+
+	// 然后设置传输状态
+	tab.isTransferring = true
+
+	// 在后台开始发送
 	go tab.startSending()
 }
 
@@ -291,10 +324,18 @@ func (tab *SendTab) onCancel() {
 		return
 	}
 	tab.statusLabel.SetText("正在取消发送...")
+	// 更新详情页状态为取消中
+	if tab.onUpdateDetail != nil {
+		tab.onUpdateDetail("cancelled", 0.0, "正在取消发送...")
+	}
 	tab.crocManager.Cancel()
 	tab.resetSendState()
 	fyne.Do(func() {
 		tab.statusLabel.SetText("发送已取消")
+		// 更新详情页状态为已取消
+		if tab.onUpdateDetail != nil {
+			tab.onUpdateDetail("cancelled", 0.0, "发送已取消")
+		}
 	})
 }
 
@@ -380,29 +421,52 @@ func (tab *SendTab) startSending() {
 		return
 	}
 
-	fyne.Do(func() { tab.statusLabel.SetText("等待接收方连接...") })
+	fyne.Do(func() {
+		tab.statusLabel.SetText("等待接收方连接...")
+		// 更新详情页状态为等待连接
+		if tab.onUpdateDetail != nil {
+			tab.onUpdateDetail("waiting", 0.0, "等待接收方连接...")
+		}
+	})
 
 	filesInfo, emptyFolders, totalNumberFolders, err := croc.GetFilesInfo(sendFiles, tab.compressCheck.Checked, false, []string{})
 	if err != nil {
-		fyne.Do(func() { tab.statusLabel.SetText("获取文件信息失败: " + err.Error()) })
+		fyne.Do(func() {
+			tab.statusLabel.SetText("获取文件信息失败: " + err.Error())
+			if tab.onUpdateDetail != nil {
+				tab.onUpdateDetail("failed", 0.0, "获取文件信息失败: "+err.Error())
+			}
+		})
 		return
 	}
 
 	err = client.Send(filesInfo, emptyFolders, totalNumberFolders)
 	if err != nil {
-		fyne.Do(func() { tab.statusLabel.SetText("发送失败: " + err.Error()) })
+		fyne.Do(func() {
+			tab.statusLabel.SetText("发送失败: " + err.Error())
+			if tab.onUpdateDetail != nil {
+				tab.onUpdateDetail("failed", 0.0, "发送失败: "+err.Error())
+			}
+		})
 		return
 	}
 
-	go tab.monitorProgress()
-
+	// 开始发送，更新状态
 	fyne.Do(func() {
 		if tab.currentMode == sendTextMode {
 			tab.statusLabel.SetText("正在发送文本...")
+			if tab.onUpdateDetail != nil {
+				tab.onUpdateDetail("sending", 0.0, "正在发送文本...")
+			}
 		} else {
 			tab.statusLabel.SetText("正在发送文件...")
+			if tab.onUpdateDetail != nil {
+				tab.onUpdateDetail("sending", 0.0, "正在发送文件...")
+			}
 		}
 	})
+
+	go tab.monitorProgress()
 }
 
 func (tab *SendTab) monitorProgress() {
@@ -411,14 +475,30 @@ func (tab *SendTab) monitorProgress() {
 	for _, progress := range steps {
 		select {
 		case <-ctx.Done():
+			// 用户取消
+			fyne.Do(func() {
+				if tab.onUpdateDetail != nil {
+					tab.onUpdateDetail("cancelled", progress, "发送已取消")
+				}
+			})
 			return // Canceled
 		case <-time.After(500 * time.Millisecond):
-			fyne.Do(func() { tab.progressBar.SetValue(progress) })
+			fyne.Do(func() {
+				tab.progressBar.SetValue(progress)
+				// 更新详情页进度
+				if tab.onUpdateDetail != nil {
+					tab.onUpdateDetail("sending", progress, fmt.Sprintf("发送中... %.1f%%", progress*100))
+				}
+			})
 		}
 	}
 	fyne.Do(func() {
 		tab.progressBar.SetValue(1.0)
 		tab.statusLabel.SetText("发送完成！")
+		// 更新详情页为完成状态
+		if tab.onUpdateDetail != nil {
+			tab.onUpdateDetail("completed", 1.0, "发送完成！")
+		}
 	})
 }
 

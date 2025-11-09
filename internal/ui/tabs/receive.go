@@ -21,6 +21,9 @@ type ReceiveTab struct {
 	crocManager *crocmgr.Manager
 	window      fyne.Window
 
+	// 回调函数
+	onNavigateToDetail func()
+
 	// UI 组件
 	scanBtn       *widget.Button
 	codeEntry     *widget.Entry
@@ -53,6 +56,20 @@ func NewReceiveTab(crocManager *crocmgr.Manager, window fyne.Window) *ReceiveTab
 	return tab
 }
 
+func (tab *ReceiveTab) SetOnNavigateToDetail(callback func()) {
+	tab.onNavigateToDetail = callback
+}
+
+// GetReceiveData 获取接收数据用于详情页
+func (tab *ReceiveTab) GetReceiveData() (code string, savePath string) {
+	return tab.receiveCode, tab.savePath
+}
+
+// GetIsReceiving 获取接收状态
+func (tab *ReceiveTab) GetIsReceiving() bool {
+	return tab.isReceiving
+}
+
 func (tab *ReceiveTab) createWidgets() {
 	// 接收方式选择
 	tab.scanBtn = widget.NewButtonWithIcon("📷 扫描二维码", theme.SearchIcon(), tab.onScanQR)
@@ -83,35 +100,54 @@ func (tab *ReceiveTab) buildPreReceiveContent() fyne.CanvasObject {
 	)
 
 	// 保存位置选择
-	saveSection := container.NewBorder(
-		nil, nil,
-		tab.savePathBtn, tab.savePathLabel,
+	saveSection := container.NewHBox(
+		tab.savePathBtn,
+		tab.savePathLabel,
 	)
 
 	// 操作按钮
-	actionSection := container.NewHBox(
+	actionSection := container.NewVBox(
 		tab.downloadBtn,
 	)
 
-	vbox := container.NewVBox(
+	// 主要内容
+	mainContent := container.NewVBox(
 		widget.NewCard("接收方式", "", codeSection),
 		widget.NewCard("保存设置", "", saveSection),
-		actionSection,
+		widget.NewCard("操作", "", actionSection),
 	)
-	return container.NewVScroll(vbox)
+
+	// 添加一些垂直间距
+	contentWithSpacing := container.NewVBox(
+		widget.NewLabel(""), // 顶部间距
+		mainContent,
+		widget.NewLabel(""), // 底部间距
+	)
+
+	return container.NewScroll(contentWithSpacing)
 }
 
 func (tab *ReceiveTab) buildPostReceiveContent() fyne.CanvasObject {
-	vbox := container.NewVBox(
-		widget.NewCard("传输状态", "", container.NewVBox(
-			tab.progressBar,
-			tab.statusLabel,
-		)),
-		container.NewHBox(
-			tab.cancelBtn,
-		),
+	// 传输状态卡片
+	statusCard := widget.NewCard("传输状态", "", container.NewVBox(
+		tab.progressBar,
+		tab.statusLabel,
+	))
+
+	// 操作按钮
+	actionSection := container.NewVBox(
+		tab.cancelBtn,
 	)
-	return container.NewVScroll(vbox)
+
+	// 主要内容
+	mainContent := container.NewVBox(
+		widget.NewLabel(""), // 顶部间距
+		statusCard,
+		widget.NewCard("操作", "", actionSection),
+		widget.NewLabel(""), // 底部间距
+	)
+
+	return container.NewScroll(mainContent)
 }
 
 func (tab *ReceiveTab) buildContent() {
@@ -198,10 +234,14 @@ func (tab *ReceiveTab) onDownload() {
 	}
 
 	tab.receiveCode = code
+
+	// 先导航到详情页（此时状态还是 Idle，允许导航）
+	if tab.onNavigateToDetail != nil {
+		tab.onNavigateToDetail()
+	}
+
+	// 然后设置接收状态
 	tab.isReceiving = true
-	tab.refreshDisplay()
-	tab.progressBar.SetValue(0.0)
-	tab.statusLabel.SetText("开始接收...")
 
 	// 启动接收协程
 	go tab.startReceiving()
