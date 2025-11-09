@@ -10,7 +10,7 @@ func main() {
 	a := app.NewWithID("com.shapled.mocroc")
 
 	// 创建主窗口
-	w := a.NewWindow("Croc Mobile")
+	w := a.NewWindow("MoCroc")
 	w.SetIcon(nil) // TODO: 添加应用图标
 
 	// 构建主界面

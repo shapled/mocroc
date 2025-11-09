@@ -20,15 +20,15 @@ const (
 )
 
 type ReceiveDetailPage struct {
-	window      fyne.Window
-	onBack      func()
-	onCancel    func()
-	state       ReceiveDetailState
-	fileName    string
-	senderInfo  string
-	progress    float64
-	statusMsg   string
-	savePath    string
+	window     fyne.Window
+	onBack     func()
+	onCancel   func()
+	state      ReceiveDetailState
+	fileName   string
+	senderInfo string
+	progress   float64
+	statusMsg  string
+	savePath   string
 }
 
 func NewReceiveDetailPage(window fyne.Window, onBack, onCancel func()) *ReceiveDetailPage {
@@ -66,9 +66,6 @@ func (p *ReceiveDetailPage) SetSavePath(path string) {
 }
 
 func (p *ReceiveDetailPage) Build() fyne.CanvasObject {
-	// 标题
-	title := widget.NewLabelWithStyle("接收详情", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-
 	// 信息卡片
 	infoCard := widget.NewCard("传输信息", "", container.NewVBox(
 		p.createInfoRow("文件:", p.fileName, "等待信息..."),
@@ -115,8 +112,6 @@ func (p *ReceiveDetailPage) Build() fyne.CanvasObject {
 
 	// 主内容
 	mainContent := container.NewVBox(
-		widget.NewLabel(""), // 顶部间距
-		title,
 		widget.NewLabel(""),
 		infoCard,
 		widget.NewLabel(""),

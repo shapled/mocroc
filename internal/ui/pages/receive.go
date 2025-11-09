@@ -1,4 +1,4 @@
-package tabs
+package pages
 
 import (
 	"fmt"
@@ -35,10 +35,10 @@ type ReceiveTab struct {
 	statusLabel   *widget.Label
 
 	// 数据
-		receiveCode string
-		savePath    string
-		isReceiving bool
-		isActive    bool
+	receiveCode string
+	savePath    string
+	isReceiving bool
+	isActive    bool
 
 	// 容器
 	content fyne.CanvasObject

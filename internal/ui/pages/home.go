@@ -25,7 +25,7 @@ func NewHomePage(window fyne.Window, onSend, onReceive, onHistory func()) *HomeP
 
 func (h *HomePage) Build() fyne.CanvasObject {
 	// 标题
-	title := widget.NewLabelWithStyle("Croc Mobile", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	title := widget.NewLabelWithStyle("MoCroc", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	title.TextStyle = fyne.TextStyle{Bold: true}
 
 	// 副标题
@@ -57,11 +57,13 @@ func (h *HomePage) Build() fyne.CanvasObject {
 	// 主内容布局
 	content := container.NewVBox(
 		title,
-		widget.NewLabel(""),
 		subtitle,
 		widget.NewLabel(""),
-		widget.NewLabel(""),
 		buttonContainer,
+		widget.NewLabel(""),
+		widget.NewLabel(""),
+		widget.NewLabel(""),
+		widget.NewLabel(""),
 	)
 
 	// 居中布局

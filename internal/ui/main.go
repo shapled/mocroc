@@ -11,7 +11,6 @@ import (
 	"github.com/shapled/mocroc/internal/crocmgr"
 	"github.com/shapled/mocroc/internal/types"
 	"github.com/shapled/mocroc/internal/ui/pages"
-	"github.com/shapled/mocroc/internal/ui/tabs"
 )
 
 type PageType int
@@ -33,17 +32,18 @@ type MainUI struct {
 	crocManager *crocmgr.Manager
 
 	// 页面
-	currentPage PageType
-	content     *container.Scroll
-	homePage        *pages.HomePage
-	sendTab         *tabs.SendTab
-	receiveTab      *tabs.ReceiveTab
-	historyTab      *tabs.HistoryTab
-	sendDetailPage  *pages.SendDetailPage
+	currentPage       PageType
+	content           *container.Scroll
+	homePage          *pages.HomePage
+	sendTab           *pages.SendTab
+	receiveTab        *pages.ReceiveTab
+	historyTab        *pages.HistoryTab
+	sendDetailPage    *pages.SendDetailPage
 	receiveDetailPage *pages.ReceiveDetailPage
 
-	// 导航
+	// Top Bar
 	backBtn *widget.Button
+	title   *widget.Label
 }
 
 func NewMainUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
@@ -67,6 +67,7 @@ func (ui *MainUI) createPages() {
 		ui.goBack()
 	})
 	ui.backBtn.Hide() // 初始隐藏
+	ui.title = widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
 	// 创建首页
 	ui.homePage = pages.NewHomePage(ui.window,
@@ -97,9 +98,9 @@ func (ui *MainUI) createPages() {
 	)
 
 	// 创建功能页面
-	ui.sendTab = tabs.NewSendTab(ui.crocManager, ui.window)
-	ui.receiveTab = tabs.NewReceiveTab(ui.crocManager, ui.window)
-	ui.historyTab = tabs.NewHistoryTab()
+	ui.sendTab = pages.NewSendTab(ui.crocManager, ui.window)
+	ui.receiveTab = pages.NewReceiveTab(ui.crocManager, ui.window)
+	ui.historyTab = pages.NewHistoryTab()
 
 	// 设置导航回调
 	ui.sendTab.SetOnNavigateToDetail(func() {
@@ -167,11 +168,13 @@ func (ui *MainUI) buildMainWindow() {
 }
 
 func (ui *MainUI) buildMainContainer() fyne.CanvasObject {
-	// 创建顶部导航栏
-	topNav := container.NewBorder(nil, nil, ui.backBtn, nil, widget.NewLabel(""))
+	headerContainer := container.NewStack(
+		container.NewHBox(ui.backBtn),
+		ui.title,
+	)
 
 	// 主容器 - 使用 Border 让内容填满剩余空间
-	mainContainer := container.NewBorder(topNav, nil, nil, nil, ui.content)
+	mainContainer := container.NewBorder(headerContainer, nil, nil, nil, ui.content)
 
 	return mainContainer
 }
@@ -199,35 +202,47 @@ func (ui *MainUI) canNavigateFromCurrentPage() bool {
 	return true
 }
 
+func (ui *MainUI) SetTitle(title string) {
+	if ui.title != nil {
+		ui.title.SetText(title)
+	}
+}
+
 func (ui *MainUI) updateContent() {
 	var content fyne.CanvasObject
 
 	switch ui.currentPage {
 	case PageTypeHome:
+		ui.SetTitle("MoCroc")
 		content = ui.homePage.Build()
 		ui.backBtn.Hide()
 		ui.sendTab.SetActive(false)
 		ui.receiveTab.SetActive(false)
 		ui.historyTab.SetActive(false)
 	case PageTypeSend:
+		ui.SetTitle("发送")
 		content = ui.sendTab.Build()
 		ui.backBtn.Show()
 		ui.sendTab.SetActive(true)
 		ui.receiveTab.SetActive(false)
 		ui.historyTab.SetActive(false)
 	case PageTypeSendDetail:
+		ui.SetTitle("发送详情")
 		content = ui.sendDetailPage.Build()
 		ui.backBtn.Show()
 	case PageTypeReceive:
+		ui.SetTitle("接收")
 		content = ui.receiveTab.Build()
 		ui.backBtn.Show()
 		ui.sendTab.SetActive(false)
 		ui.receiveTab.SetActive(true)
 		ui.historyTab.SetActive(false)
 	case PageTypeReceiveDetail:
+		ui.SetTitle("接收详情")
 		content = ui.receiveDetailPage.Build()
 		ui.backBtn.Show()
 	case PageTypeHistory:
+		ui.SetTitle("历史")
 		content = ui.historyTab.Build()
 		ui.backBtn.Show()
 		ui.sendTab.SetActive(false)
@@ -235,6 +250,7 @@ func (ui *MainUI) updateContent() {
 		ui.historyTab.SetActive(true)
 		ui.historyTab.Refresh()
 	default:
+		ui.SetTitle("MoCroc")
 		content = ui.homePage.Build()
 		ui.backBtn.Hide()
 	}

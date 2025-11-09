@@ -13,8 +13,8 @@ type SendDetailState int
 
 const (
 	SendDetailStatePreparing SendDetailState = iota
-	SendDetailStateWaiting   // 等待接收端连接
-	SendDetailStateSending   // 正在发送数据
+	SendDetailStateWaiting                   // 等待接收端连接
+	SendDetailStateSending                   // 正在发送数据
 	SendDetailStateCompleted
 	SendDetailStateFailed
 	SendDetailStateCancelled
@@ -69,9 +69,6 @@ func (p *SendDetailPage) SetProgress(progress float64) {
 }
 
 func (p *SendDetailPage) Build() fyne.CanvasObject {
-	// 标题
-	title := widget.NewLabelWithStyle("发送详情", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-
 	// 信息卡片
 	infoCard := widget.NewCard("传输信息", "", container.NewVBox(
 		p.createInfoRow("文件:", p.fileName, "准备中..."),
@@ -81,21 +78,22 @@ func (p *SendDetailPage) Build() fyne.CanvasObject {
 
 	// 进度卡片
 	var progressCard fyne.CanvasObject
-	if p.state == SendDetailStateSending {
+	switch p.state {
+	case SendDetailStateSending:
 		progressBar := widget.NewProgressBar()
 		progressBar.SetValue(p.progress)
 		progressCard = widget.NewCard("传输进度", "", container.NewVBox(
 			progressBar,
 			widget.NewLabel(fmt.Sprintf("%.1f%%", p.progress*100)),
 		))
-	} else if p.state == SendDetailStateWaiting {
+	case SendDetailStateWaiting:
 		// 等待状态显示无限进度条
 		progressBar := widget.NewProgressBarInfinite()
 		progressCard = widget.NewCard("等待连接", "", container.NewVBox(
 			progressBar,
 			widget.NewLabel("等待接收端输入接收码..."),
 		))
-	} else {
+	default:
 		progressCard = widget.NewLabel("")
 	}
 
@@ -124,8 +122,6 @@ func (p *SendDetailPage) Build() fyne.CanvasObject {
 
 	// 主内容 - 使用边框布局让内容更好地填充空间
 	mainContent := container.NewVBox(
-		widget.NewLabel(""), // 顶部间距
-		title,
 		widget.NewLabel(""),
 		infoCard,
 		widget.NewLabel(""),

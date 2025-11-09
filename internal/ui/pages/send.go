@@ -1,4 +1,4 @@
-package tabs
+package pages
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ type SendTab struct {
 
 	// 回调函数
 	onNavigateToDetail func()
-	onUpdateDetail    func(state string, progress float64, message string)
+	onUpdateDetail     func(state string, progress float64, message string)
 
 	// UI 组件
 	modeRadio         *widget.RadioGroup
@@ -61,6 +61,7 @@ type SendTab struct {
 	currentMode    string
 	isTransferring bool
 	isActive       bool
+	isCancelled    bool // 取消标志
 
 	// 容器
 	content fyne.CanvasObject
@@ -328,8 +329,14 @@ func (tab *SendTab) onCancel() {
 	if tab.onUpdateDetail != nil {
 		tab.onUpdateDetail("cancelled", 0.0, "正在取消发送...")
 	}
+
+	// 设置取消标志
+	tab.isCancelled = true
+
+	// 取消 croc 管理器的 context
 	tab.crocManager.Cancel()
-	tab.resetSendState()
+
+	// 不立即重置状态，等待发送进程检测到取消信号
 	fyne.Do(func() {
 		tab.statusLabel.SetText("发送已取消")
 		// 更新详情页状态为已取消
@@ -341,6 +348,7 @@ func (tab *SendTab) onCancel() {
 
 func (tab *SendTab) resetSendState() {
 	tab.isTransferring = false
+	tab.isCancelled = false // 重置取消标志
 	fyne.Do(func() {
 		tab.preSendCard.Show()
 		tab.postSendCard.Hide()
@@ -437,17 +445,7 @@ func (tab *SendTab) startSending() {
 				tab.onUpdateDetail("failed", 0.0, "获取文件信息失败: "+err.Error())
 			}
 		})
-		return
-	}
-
-	err = client.Send(filesInfo, emptyFolders, totalNumberFolders)
-	if err != nil {
-		fyne.Do(func() {
-			tab.statusLabel.SetText("发送失败: " + err.Error())
-			if tab.onUpdateDetail != nil {
-				tab.onUpdateDetail("failed", 0.0, "发送失败: "+err.Error())
-			}
-		})
+		tab.resetSendState()
 		return
 	}
 
@@ -466,57 +464,95 @@ func (tab *SendTab) startSending() {
 		}
 	})
 
+	// 在单独的 goroutine 中执行发送，以便可以响应取消
+	go func() {
+		defer tab.resetSendState() // 确保状态被重置
+
+		err := client.Send(filesInfo, emptyFolders, totalNumberFolders)
+		if err != nil {
+			// 检查是否是因为取消导致的错误
+			if tab.isCancelled {
+				fyne.Do(func() {
+					tab.statusLabel.SetText("发送已取消")
+					if tab.onUpdateDetail != nil {
+						tab.onUpdateDetail("cancelled", 0.0, "发送已取消")
+					}
+				})
+			} else {
+				fyne.Do(func() {
+					tab.statusLabel.SetText("发送失败: " + err.Error())
+					if tab.onUpdateDetail != nil {
+						tab.onUpdateDetail("failed", 0.0, "发送失败: "+err.Error())
+					}
+				})
+			}
+			return
+		}
+
+		// 发送成功
+		fyne.Do(func() {
+			tab.progressBar.SetValue(1.0)
+			tab.statusLabel.SetText("发送完成！")
+			if tab.onUpdateDetail != nil {
+				tab.onUpdateDetail("completed", 1.0, "发送完成！")
+			}
+		})
+	}()
+
+	// 启动进度监控
 	go tab.monitorProgress()
 }
 
 func (tab *SendTab) monitorProgress() {
+	// 简化的进度监控 - 只模拟进度，实际状态由发送 goroutine 处理
 	ctx := tab.crocManager.GetContext()
 	steps := []float64{0.1, 0.3, 0.5, 0.7, 0.9}
+
 	for _, progress := range steps {
+		// 检查取消标志
+		if tab.isCancelled {
+			return
+		}
+
 		select {
 		case <-ctx.Done():
 			// 用户取消
-			fyne.Do(func() {
-				if tab.onUpdateDetail != nil {
-					tab.onUpdateDetail("cancelled", progress, "发送已取消")
-				}
-			})
-			return // Canceled
+			return
 		case <-time.After(500 * time.Millisecond):
-			fyne.Do(func() {
-				tab.progressBar.SetValue(progress)
-				// 更新详情页进度
-				if tab.onUpdateDetail != nil {
-					tab.onUpdateDetail("sending", progress, fmt.Sprintf("发送中... %.1f%%", progress*100))
-				}
-			})
+			// 再次检查取消标志
+			if tab.isCancelled {
+				return
+			}
+
+			// 只有在未取消时才更新进度
+			if !tab.isCancelled {
+				fyne.Do(func() {
+					tab.progressBar.SetValue(progress)
+					// 更新详情页进度
+					if tab.onUpdateDetail != nil {
+						tab.onUpdateDetail("sending", progress, fmt.Sprintf("发送中... %.1f%%", progress*100))
+					}
+				})
+			}
 		}
 	}
-	fyne.Do(func() {
-		tab.progressBar.SetValue(1.0)
-		tab.statusLabel.SetText("发送完成！")
-		// 更新详情页为完成状态
-		if tab.onUpdateDetail != nil {
-			tab.onUpdateDetail("completed", 1.0, "发送完成！")
-		}
-	})
 }
 
 func (tab *SendTab) buildCrocOptions() croc.Options {
 	return croc.Options{
-		IsSender:       true,
-		SharedSecret:   tab.codePhrase,
-		Debug:          false,
-		NoPrompt:       true,
-		Stdout:         false,
-		HashAlgorithm:  "xxhash",
-		Curve:          "p256",
-		ZipFolder:      tab.compressCheck.Checked,
-		OnlyLocal:      false,
-		DisableLocal:   tab.disableLocalCheck.Checked,
-		RelayAddress:   tab.relayEntry.Text,
-		RelayPorts:     []string{"9009", "9010", "9011", "9012", "9013"},
-		RelayPassword:  tab.passwordEntry.Text,
+		IsSender:      true,
+		SharedSecret:  tab.codePhrase,
+		Debug:         false,
+		NoPrompt:      true,
+		Stdout:        false,
+		HashAlgorithm: "xxhash",
+		Curve:         "p256",
+		ZipFolder:     tab.compressCheck.Checked,
+		OnlyLocal:     false,
+		DisableLocal:  tab.disableLocalCheck.Checked,
+		RelayAddress:  tab.relayEntry.Text,
+		RelayPorts:    []string{"9009", "9010", "9011", "9012", "9013"},
+		RelayPassword: tab.passwordEntry.Text,
 	}
 }
 

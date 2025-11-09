@@ -1,4 +1,4 @@
-package tabs
+package pages
 
 import (
 	"fmt"
@@ -16,10 +16,10 @@ type HistoryTab struct {
 	storage *storage.HistoryManager
 
 	// UI 组件
-	historyList  *widget.List
-	statsCard    *widget.Card
-	clearBtn     *widget.Button
-	noDataLabel  *widget.Label
+	historyList *widget.List
+	statsCard   *widget.Card
+	clearBtn    *widget.Button
+	noDataLabel *widget.Label
 
 	// 状态
 	isActive bool
