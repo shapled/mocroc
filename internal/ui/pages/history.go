@@ -8,12 +8,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/shapled/mocroc/internal/storage"
-	"github.com/shapled/mocroc/internal/types"
 )
 
-type HistoryTab struct {
+type HistoryPage struct {
 	// 存储管理器
-	storage *storage.HistoryManager
+	storage *storage.HistoryStorage
 
 	// UI 组件
 	historyList *widget.List
@@ -21,42 +20,44 @@ type HistoryTab struct {
 	clearBtn    *widget.Button
 	noDataLabel *widget.Label
 
-	// 状态
-	isActive bool
-
 	// 容器
 	content fyne.CanvasObject
 }
 
 type HistoryItem = storage.HistoryItem
 
-func NewHistoryTab() *HistoryTab {
-	tab := &HistoryTab{
-		storage: storage.NewHistoryManager(),
+func NewHistoryPage(storage *storage.HistoryStorage) *HistoryPage {
+	tab := &HistoryPage{
+		storage: storage,
 	}
 	tab.createWidgets()
 	tab.buildContent()
 	return tab
 }
 
-func (tab *HistoryTab) createWidgets() {
+func (page *HistoryPage) createWidgets() {
 	// 历史记录列表
-	tab.historyList = widget.NewList(
+	page.historyList = widget.NewList(
 		func() int {
-			return len(tab.storage.GetAll())
+			items, _ := page.storage.GetAll()
+			return len(items)
 		},
 		func() fyne.CanvasObject {
 			return widget.NewCard("", "", widget.NewLabel(""))
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
 			card := obj.(*widget.Card)
-			items := tab.storage.GetAll()
+			items, err := page.storage.GetAll()
+			if err != nil {
+				card.SetContent(widget.NewLabel("加载失败: " + err.Error()))
+				return
+			}
 			if id >= len(items) {
 				return
 			}
 			item := items[id]
 
-			statusIcon := tab.getStatusIcon(item.Status)
+			statusIcon := page.getStatusIcon(item.Status)
 			description := widget.NewRichTextFromMarkdown(
 				"**" + item.FileName + "**\n" +
 					"📁 " + item.FileSize + " | 🔑 " + item.Code + "\n" +
@@ -70,17 +71,22 @@ func (tab *HistoryTab) createWidgets() {
 	)
 
 	// 统计信息
-	tab.statsCard = tab.buildStatsCard()
+	page.statsCard = page.buildStatsCard()
 
 	// 清除按钮
-	tab.clearBtn = widget.NewButtonWithIcon("清除历史", theme.DeleteIcon(), tab.onClearHistory)
+	page.clearBtn = widget.NewButtonWithIcon("清除历史", theme.DeleteIcon(), page.onClearHistory)
 
 	// 无数据显示
-	tab.noDataLabel = widget.NewLabel("暂无传输记录")
+	page.noDataLabel = widget.NewLabel("暂无传输记录")
 }
 
-func (tab *HistoryTab) buildStatsCard() *widget.Card {
-	total, completed, failed, inProgress := tab.storage.GetStats()
+func (page *HistoryPage) buildStatsCard() *widget.Card {
+	total, completed, failed, inProgress, err := page.storage.GetStats()
+
+	if err != nil {
+		statsText := widget.NewLabel("获取统计信息失败: " + err.Error())
+		return widget.NewCard("", "", statsText)
+	}
 
 	statsText := widget.NewRichTextFromMarkdown(
 		"📊 **传输统计**\n" +
@@ -91,51 +97,38 @@ func (tab *HistoryTab) buildStatsCard() *widget.Card {
 	return widget.NewCard("", "", statsText)
 }
 
-func (tab *HistoryTab) buildContent() {
-	items := tab.storage.GetAll()
+func (page *HistoryPage) buildContent() {
+	items, err := page.storage.GetAll()
+	if err != nil {
+		page.content = container.NewVBox(
+			widget.NewCard("历史记录", "", widget.NewLabel("加载历史记录失败: "+err.Error())),
+		)
+		return
+	}
+
 	if len(items) == 0 {
-		tab.content = container.NewVBox(
-			widget.NewCard("历史记录", "", tab.noDataLabel),
+		page.content = container.NewVBox(
+			widget.NewCard("历史记录", "", page.noDataLabel),
 		)
 	} else {
 		vbox := container.NewVBox(
-			tab.statsCard,
+			page.statsCard,
 			widget.NewSeparator(),
 			widget.NewLabel("传输记录:"),
-			tab.historyList,
+			page.historyList,
 			widget.NewSeparator(),
-			tab.clearBtn,
+			page.clearBtn,
 		)
-		tab.content = container.NewVScroll(vbox)
+		page.content = container.NewVScroll(vbox)
 	}
 }
 
-func (tab *HistoryTab) Build() fyne.CanvasObject {
-	return tab.content
-}
-
-// TabInterface 实现
-func (tab *HistoryTab) GetState() types.TabState {
-	return types.TabStateIdle // 历史记录页面不会有传输状态
-}
-
-func (tab *HistoryTab) Cancel() error {
-	return fmt.Errorf("历史记录页面没有可取消的操作")
-}
-
-func (tab *HistoryTab) IsActive() bool {
-	return tab.isActive
-}
-
-func (tab *HistoryTab) SetActive(active bool) {
-	tab.isActive = active
-	if active {
-		tab.Refresh()
-	}
+func (page *HistoryPage) Build() fyne.CanvasObject {
+	return page.content
 }
 
 // 辅助方法
-func (tab *HistoryTab) getStatusIcon(status string) string {
+func (page *HistoryPage) getStatusIcon(status string) string {
 	switch status {
 	case "completed":
 		return "✅"
@@ -149,18 +142,18 @@ func (tab *HistoryTab) getStatusIcon(status string) string {
 }
 
 // 事件处理器
-func (tab *HistoryTab) onClearHistory() {
-	tab.storage.Clear()
-	tab.refresh()
+func (page *HistoryPage) onClearHistory() {
+	page.storage.Clear()
+	page.refresh()
 }
 
-func (tab *HistoryTab) refresh() {
-	tab.statsCard = tab.buildStatsCard()
-	tab.buildContent()
-	tab.historyList.Refresh()
+func (page *HistoryPage) refresh() {
+	page.statsCard = page.buildStatsCard()
+	page.buildContent()
+	page.historyList.Refresh()
 }
 
 // Refresh 公开的刷新方法
-func (tab *HistoryTab) Refresh() {
-	tab.refresh()
+func (page *HistoryPage) Refresh() {
+	page.refresh()
 }

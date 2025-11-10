@@ -41,86 +41,81 @@ func NewReceiveDetailPage(window fyne.Window, onBack, onCancel func()) *ReceiveD
 	}
 }
 
-func (p *ReceiveDetailPage) SetFileName(name string) {
-	p.fileName = name
+func (page *ReceiveDetailPage) SetFileName(name string) {
+	page.fileName = name
 }
 
-func (p *ReceiveDetailPage) SetSenderInfo(info string) {
-	p.senderInfo = info
+func (page *ReceiveDetailPage) SetSenderInfo(info string) {
+	page.senderInfo = info
 }
 
-func (p *ReceiveDetailPage) SetState(state ReceiveDetailState) {
-	p.state = state
+func (page *ReceiveDetailPage) SetState(state ReceiveDetailState) {
+	page.state = state
 }
 
-func (p *ReceiveDetailPage) SetProgress(progress float64) {
-	p.progress = progress
+func (page *ReceiveDetailPage) SetProgress(progress float64) {
+	page.progress = progress
 }
 
-func (p *ReceiveDetailPage) SetStatusMessage(msg string) {
-	p.statusMsg = msg
+func (page *ReceiveDetailPage) SetStatusMessage(msg string) {
+	page.statusMsg = msg
 }
 
-func (p *ReceiveDetailPage) SetSavePath(path string) {
-	p.savePath = path
+func (page *ReceiveDetailPage) SetSavePath(path string) {
+	page.savePath = path
 }
 
-func (p *ReceiveDetailPage) Build() fyne.CanvasObject {
+func (page *ReceiveDetailPage) Build() fyne.CanvasObject {
 	// 信息卡片
 	infoCard := widget.NewCard("传输信息", "", container.NewVBox(
-		p.createInfoRow("文件:", p.fileName, "等待信息..."),
-		p.createInfoRow("发送者:", p.senderInfo, "获取中..."),
-		p.createInfoRow("保存到:", p.savePath, "默认下载目录"),
-		p.createInfoRow("状态:", p.getStateText(), ""),
+		page.createInfoRow("文件:", page.fileName, "等待信息..."),
+		page.createInfoRow("发送者:", page.senderInfo, "获取中..."),
+		page.createInfoRow("保存到:", page.savePath, "默认下载目录"),
+		page.createInfoRow("状态:", page.getStateText(), ""),
 	))
 
 	// 进度卡片
 	var progressCard fyne.CanvasObject
-	if p.state == ReceiveDetailStateReceiving || p.state == ReceiveDetailStateConnecting {
+	if page.state == ReceiveDetailStateReceiving || page.state == ReceiveDetailStateConnecting {
 		progressBar := widget.NewProgressBar()
-		progressBar.SetValue(p.progress)
+		progressBar.SetValue(page.progress)
 		progressCard = widget.NewCard("传输进度", "", container.NewVBox(
 			progressBar,
-			widget.NewLabel(fmt.Sprintf("%.1f%%", p.progress*100)),
+			widget.NewLabel(fmt.Sprintf("%.1f%%", page.progress*100)),
 		))
 	} else {
 		progressCard = widget.NewLabel("")
 	}
 
 	// 状态消息
-	if p.statusMsg == "" {
-		p.statusMsg = "正在连接发送方..."
+	if page.statusMsg == "" {
+		page.statusMsg = "正在连接发送方..."
 	}
-	statusCard := widget.NewCard("状态信息", "", widget.NewLabel(p.statusMsg))
+	statusCard := widget.NewCard("状态信息", "", widget.NewLabel(page.statusMsg))
 
 	// 操作按钮
 	var actionButton *widget.Button
-	switch p.state {
+	switch page.state {
 	case ReceiveDetailStateConnecting, ReceiveDetailStateReceiving:
-		actionButton = widget.NewButtonWithIcon("取消接收", theme.CancelIcon(), p.onCancel)
+		actionButton = widget.NewButtonWithIcon("取消接收", theme.CancelIcon(), page.onCancel)
 	case ReceiveDetailStateCompleted:
-		actionButton = widget.NewButtonWithIcon("完成", theme.ConfirmIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("完成", theme.ConfirmIcon(), page.onBack)
 		actionButton.Importance = widget.HighImportance
 	case ReceiveDetailStateFailed, ReceiveDetailStateCancelled:
-		actionButton = widget.NewButtonWithIcon("重新接收", theme.ViewRefreshIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("重新接收", theme.ViewRefreshIcon(), page.onBack)
 		actionButton.Importance = widget.MediumImportance
 	default:
-		actionButton = widget.NewButtonWithIcon("返回", theme.NavigateBackIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("返回", theme.NavigateBackIcon(), page.onBack)
 	}
 
 	actionCard := widget.NewCard("操作", "", actionButton)
 
 	// 主内容
 	mainContent := container.NewVBox(
-		widget.NewLabel(""),
 		infoCard,
-		widget.NewLabel(""),
 		progressCard,
-		widget.NewLabel(""),
 		statusCard,
-		widget.NewLabel(""),
 		actionCard,
-		widget.NewLabel(""), // 底部间距
 	)
 
 	// 使用滚动容器
@@ -128,7 +123,7 @@ func (p *ReceiveDetailPage) Build() fyne.CanvasObject {
 }
 
 // createInfoRow 创建信息行
-func (p *ReceiveDetailPage) createInfoRow(label, value, placeholder string) fyne.CanvasObject {
+func (page *ReceiveDetailPage) createInfoRow(label, value, placeholder string) fyne.CanvasObject {
 	labelWidget := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	valueWidget := widget.NewLabel(value)
@@ -139,8 +134,8 @@ func (p *ReceiveDetailPage) createInfoRow(label, value, placeholder string) fyne
 	return container.NewHBox(labelWidget, valueWidget)
 }
 
-func (p *ReceiveDetailPage) getStateText() string {
-	switch p.state {
+func (page *ReceiveDetailPage) getStateText() string {
+	switch page.state {
 	case ReceiveDetailStateConnecting:
 		return "连接中"
 	case ReceiveDetailStateReceiving:

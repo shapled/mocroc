@@ -23,7 +23,7 @@ func NewHomePage(window fyne.Window, onSend, onReceive, onHistory func()) *HomeP
 	}
 }
 
-func (h *HomePage) Build() fyne.CanvasObject {
+func (page *HomePage) Build() fyne.CanvasObject {
 	// 标题
 	title := widget.NewLabelWithStyle("MoCroc", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	title.TextStyle = fyne.TextStyle{Bold: true}
@@ -32,13 +32,13 @@ func (h *HomePage) Build() fyne.CanvasObject {
 	subtitle := widget.NewLabelWithStyle("点对点文件传输工具", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
 
 	// 功能按钮
-	sendBtn := widget.NewButtonWithIcon("发送文件", theme.ContentPasteIcon(), h.onSend)
+	sendBtn := widget.NewButtonWithIcon("发送文件", theme.ContentPasteIcon(), page.onSend)
 	sendBtn.Importance = widget.HighImportance
 
-	receiveBtn := widget.NewButtonWithIcon("接收文件", theme.DownloadIcon(), h.onReceive)
+	receiveBtn := widget.NewButtonWithIcon("接收文件", theme.DownloadIcon(), page.onReceive)
 	receiveBtn.Importance = widget.HighImportance
 
-	historyBtn := widget.NewButtonWithIcon("传输历史", theme.HistoryIcon(), h.onHistory)
+	historyBtn := widget.NewButtonWithIcon("传输历史", theme.HistoryIcon(), page.onHistory)
 
 	// 按钮样式设置
 	for _, btn := range []*widget.Button{sendBtn, receiveBtn, historyBtn} {
@@ -47,8 +47,6 @@ func (h *HomePage) Build() fyne.CanvasObject {
 
 	// 创建按钮容器
 	buttonContainer := container.NewVBox(
-		// 添加间距
-		widget.NewLabel(""),
 		sendBtn,
 		receiveBtn,
 		historyBtn,

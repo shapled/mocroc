@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -14,15 +15,17 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/schollz/croc/v10/src/croc"
 	"github.com/shapled/mocroc/internal/crocmgr"
-	"github.com/shapled/mocroc/internal/types"
+	"github.com/shapled/mocroc/internal/storage"
 )
 
-type ReceiveTab struct {
-	crocManager *crocmgr.Manager
-	window      fyne.Window
+type ReceivePage struct {
+	crocManager    *crocmgr.Manager
+	window         fyne.Window
+	historyStorage *storage.HistoryStorage
 
 	// 回调函数
 	onNavigateToDetail func()
+	onUpdateDetail   func(state string, progress float64, message string)
 
 	// UI 组件
 	scanBtn       *widget.Button
@@ -35,20 +38,21 @@ type ReceiveTab struct {
 	statusLabel   *widget.Label
 
 	// 数据
-	receiveCode string
-	savePath    string
-	isReceiving bool
-	isActive    bool
+	receiveCode  string
+	savePath     string
+	isReceiving  bool
+	currentItemID string // 当前传输记录的ID
 
 	// 容器
 	content fyne.CanvasObject
 }
 
-func NewReceiveTab(crocManager *crocmgr.Manager, window fyne.Window) *ReceiveTab {
-	tab := &ReceiveTab{
-		crocManager: crocManager,
-		window:      window,
-		savePath:    getDefaultSavePath(),
+func NewReceiveTab(crocManager *crocmgr.Manager, window fyne.Window, historyStorage *storage.HistoryStorage) *ReceivePage {
+	tab := &ReceivePage{
+		crocManager:    crocManager,
+		window:         window,
+		historyStorage: historyStorage,
+		savePath:       getDefaultSavePath(),
 	}
 	tab.createWidgets()
 	tab.buildContent()
@@ -56,58 +60,62 @@ func NewReceiveTab(crocManager *crocmgr.Manager, window fyne.Window) *ReceiveTab
 	return tab
 }
 
-func (tab *ReceiveTab) SetOnNavigateToDetail(callback func()) {
-	tab.onNavigateToDetail = callback
+func (page *ReceivePage) SetOnNavigateToDetail(callback func()) {
+	page.onNavigateToDetail = callback
+}
+
+func (page *ReceivePage) SetOnUpdateDetail(callback func(state string, progress float64, message string)) {
+	page.onUpdateDetail = callback
 }
 
 // GetReceiveData 获取接收数据用于详情页
-func (tab *ReceiveTab) GetReceiveData() (code string, savePath string) {
-	return tab.receiveCode, tab.savePath
+func (page *ReceivePage) GetReceiveData() (code string, savePath string) {
+	return page.receiveCode, page.savePath
 }
 
 // GetIsReceiving 获取接收状态
-func (tab *ReceiveTab) GetIsReceiving() bool {
-	return tab.isReceiving
+func (page *ReceivePage) GetIsReceiving() bool {
+	return page.isReceiving
 }
 
-func (tab *ReceiveTab) createWidgets() {
+func (page *ReceivePage) createWidgets() {
 	// 接收方式选择
-	tab.scanBtn = widget.NewButtonWithIcon("📷 扫描二维码", theme.SearchIcon(), tab.onScanQR)
-	tab.codeEntry = widget.NewEntry()
-	tab.codeEntry.SetPlaceHolder("或手动输入接收码")
+	page.scanBtn = widget.NewButtonWithIcon("📷 扫描二维码", theme.SearchIcon(), page.onScanQR)
+	page.codeEntry = widget.NewEntry()
+	page.codeEntry.SetPlaceHolder("或手动输入接收码")
 
 	// 保存位置
-	tab.savePathLabel = widget.NewLabel(tab.savePath)
-	tab.savePathBtn = widget.NewButtonWithIcon("选择保存位置", theme.FolderIcon(), tab.onSelectSavePath)
+	page.savePathLabel = widget.NewLabel(page.savePath)
+	page.savePathBtn = widget.NewButtonWithIcon("选择保存位置", theme.FolderIcon(), page.onSelectSavePath)
 
 	// 下载和取消按钮
-	tab.downloadBtn = widget.NewButtonWithIcon("开始接收", theme.DownloadIcon(), tab.onDownload)
-	tab.cancelBtn = widget.NewButtonWithIcon("取消接收", theme.CancelIcon(), tab.onCancel)
-	tab.cancelBtn.Hide()
+	page.downloadBtn = widget.NewButtonWithIcon("开始接收", theme.DownloadIcon(), page.onDownload)
+	page.cancelBtn = widget.NewButtonWithIcon("取消接收", theme.CancelIcon(), page.onCancel)
+	page.cancelBtn.Hide()
 
 	// 进度显示
-	tab.progressBar = widget.NewProgressBar()
-	tab.statusLabel = widget.NewLabel("等待接收码...")
+	page.progressBar = widget.NewProgressBar()
+	page.statusLabel = widget.NewLabel("等待接收码...")
 }
 
-func (tab *ReceiveTab) buildPreReceiveContent() fyne.CanvasObject {
+func (page *ReceivePage) buildPreReceiveContent() fyne.CanvasObject {
 	// 接收码输入区域
 	codeSection := container.NewVBox(
-		tab.scanBtn,
+		page.scanBtn,
 		widget.NewForm(
-			&widget.FormItem{Text: "接收码:", Widget: tab.codeEntry},
+			&widget.FormItem{Text: "接收码:", Widget: page.codeEntry},
 		),
 	)
 
 	// 保存位置选择
 	saveSection := container.NewHBox(
-		tab.savePathBtn,
-		tab.savePathLabel,
+		page.savePathBtn,
+		page.savePathLabel,
 	)
 
 	// 操作按钮
 	actionSection := container.NewVBox(
-		tab.downloadBtn,
+		page.downloadBtn,
 	)
 
 	// 主要内容
@@ -119,94 +127,71 @@ func (tab *ReceiveTab) buildPreReceiveContent() fyne.CanvasObject {
 
 	// 添加一些垂直间距
 	contentWithSpacing := container.NewVBox(
-		widget.NewLabel(""), // 顶部间距
 		mainContent,
-		widget.NewLabel(""), // 底部间距
 	)
 
 	return container.NewScroll(contentWithSpacing)
 }
 
-func (tab *ReceiveTab) buildPostReceiveContent() fyne.CanvasObject {
+func (page *ReceivePage) buildPostReceiveContent() fyne.CanvasObject {
 	// 传输状态卡片
 	statusCard := widget.NewCard("传输状态", "", container.NewVBox(
-		tab.progressBar,
-		tab.statusLabel,
+		page.progressBar,
+		page.statusLabel,
 	))
 
 	// 操作按钮
 	actionSection := container.NewVBox(
-		tab.cancelBtn,
+		page.cancelBtn,
 	)
 
 	// 主要内容
 	mainContent := container.NewVBox(
-		widget.NewLabel(""), // 顶部间距
 		statusCard,
 		widget.NewCard("操作", "", actionSection),
-		widget.NewLabel(""), // 底部间距
 	)
 
 	return container.NewScroll(mainContent)
 }
 
-func (tab *ReceiveTab) buildContent() {
-	if tab.isReceiving {
-		tab.content = tab.buildPostReceiveContent()
+func (page *ReceivePage) buildContent() {
+	if page.isReceiving {
+		page.content = page.buildPostReceiveContent()
 	} else {
-		tab.content = tab.buildPreReceiveContent()
+		page.content = page.buildPreReceiveContent()
 	}
 }
 
-func (tab *ReceiveTab) Build() fyne.CanvasObject {
-	return tab.content
+func (page *ReceivePage) Build() fyne.CanvasObject {
+	return page.content
 }
 
-// TabInterface 实现
-func (tab *ReceiveTab) GetState() types.TabState {
-	if tab.isReceiving {
-		return types.TabStateReceiving
-	}
-	return types.TabStateIdle
-}
-
-func (tab *ReceiveTab) Cancel() error {
-	if !tab.isReceiving {
+func (page *ReceivePage) Cancel() error {
+	if !page.isReceiving {
 		return fmt.Errorf("没有正在进行的接收任务")
 	}
-	tab.onCancel()
+	page.onCancel()
 	return nil
 }
 
-func (tab *ReceiveTab) IsActive() bool {
-	return tab.isActive
-}
-
-func (tab *ReceiveTab) SetActive(active bool) {
-	tab.isActive = active
-	if active {
-		tab.refreshDisplay()
-	}
-}
-
-func (tab *ReceiveTab) refreshDisplay() {
-	tab.buildContent()
-	tab.content.Refresh()
+func (page *ReceivePage) refreshDisplay() {
+	page.buildContent()
+	page.content.Refresh()
 }
 
 // 事件处理器
-func (tab *ReceiveTab) onScanQR() {
-	if tab.isReceiving {
-		tab.statusLabel.SetText("接收中，无法扫描二维码")
+func (page *ReceivePage) onScanQR() {
+	if page.isReceiving {
+		page.statusLabel.SetText("接收中，无法扫描二维码")
 		return
 	}
 	// TODO: 实现二维码扫描
-	tab.statusLabel.SetText("二维码扫描功能待实现")
+	page.statusLabel.SetText("二维码扫描功能待实现")
 }
 
-func (tab *ReceiveTab) onSelectSavePath() {
-	if tab.isReceiving {
-		tab.statusLabel.SetText("接收中，无法更改保存位置")
+func (page *ReceivePage) onSelectSavePath() {
+	if page.isReceiving {
+		page.statusLabel.SetText("接收中，无法更改保存位置")
 		return
 	}
 
@@ -215,53 +200,65 @@ func (tab *ReceiveTab) onSelectSavePath() {
 			return
 		}
 
-		tab.savePath = reader.Path()
-		tab.savePathLabel.SetText(tab.savePath)
-		tab.statusLabel.SetText("保存位置已更新")
-	}, tab.window)
+		page.savePath = reader.Path()
+		page.savePathLabel.SetText(page.savePath)
+		page.statusLabel.SetText("保存位置已更新")
+	}, page.window)
 }
 
-func (tab *ReceiveTab) onDownload() {
-	if tab.isReceiving {
-		tab.statusLabel.SetText("正在接收中，请等待完成")
+func (page *ReceivePage) onDownload() {
+	if page.isReceiving {
+		page.statusLabel.SetText("正在接收中，请等待完成")
 		return
 	}
 
-	code := strings.TrimSpace(tab.codeEntry.Text)
+	code := strings.TrimSpace(page.codeEntry.Text)
 	if code == "" {
-		tab.statusLabel.SetText("请先输入接收码")
+		page.statusLabel.SetText("请先输入接收码")
 		return
 	}
 
-	tab.receiveCode = code
+	page.receiveCode = code
+
+	// 创建历史记录
+	itemID, err := page.createReceiveHistoryItem(code)
+	if err != nil {
+		page.statusLabel.SetText("创建历史记录失败: " + err.Error())
+		return
+	}
+	page.currentItemID = itemID
 
 	// 先导航到详情页（此时状态还是 Idle，允许导航）
-	if tab.onNavigateToDetail != nil {
-		tab.onNavigateToDetail()
+	if page.onNavigateToDetail != nil {
+		page.onNavigateToDetail()
 	}
 
 	// 然后设置接收状态
-	tab.isReceiving = true
+	page.isReceiving = true
 
 	// 启动接收协程
-	go tab.startReceiving()
+	go page.startReceiving()
 }
 
-func (tab *ReceiveTab) onCancel() {
-	if !tab.isReceiving {
+func (page *ReceivePage) onCancel() {
+	if !page.isReceiving {
 		return
 	}
 
-	tab.statusLabel.SetText("正在取消接收...")
-	tab.crocManager.Cancel()
+	page.statusLabel.SetText("正在取消接收...")
+	page.crocManager.Cancel()
+
+	// 更新历史记录状态为已取消
+	page.updateHistoryItemStatus("cancelled")
 
 	// 重置状态
 	fyne.Do(func() {
-		tab.isReceiving = false
-		tab.refreshDisplay()
-		tab.progressBar.SetValue(0.0)
-		tab.statusLabel.SetText("接收已取消")
-		tab.receiveCode = ""
+		page.isReceiving = false
+		page.refreshDisplay()
+		page.progressBar.SetValue(0.0)
+		page.statusLabel.SetText("接收已取消")
+		page.receiveCode = ""
+		page.currentItemID = ""
 	})
 
 }
@@ -286,18 +283,28 @@ func getDefaultSavePath() string {
 	return downloads
 }
 
-func (tab *ReceiveTab) startReceiving() {
+func (page *ReceivePage) startReceiving() {
+	startTime := time.Now()
+
 	defer func() {
 		fyne.Do(func() {
-			tab.isReceiving = false
-			tab.refreshDisplay()
+			page.isReceiving = false
+			page.refreshDisplay()
 		})
 	}()
+
+	// 更新历史记录状态为进行中
+	page.updateHistoryItemStatus("in_progress")
+
+	// 通知详情页更新状态
+	if page.onUpdateDetail != nil {
+		page.onUpdateDetail("connecting", 0.0, "正在连接发送方...")
+	}
 
 	// 创建 Croc 选项 - 根据文档中的正确配置
 	options := croc.Options{
 		IsSender:       false,
-		SharedSecret:   tab.receiveCode,
+		SharedSecret:   page.receiveCode,
 		Debug:          false,
 		NoPrompt:       true, // 对应命令行的 --yes 参数
 		Stdout:         false,
@@ -318,53 +325,108 @@ func (tab *ReceiveTab) startReceiving() {
 	options.DisableLocal = false
 
 	// 创建 Croc 客户端
-	client, err := tab.crocManager.CreateCrocClient(options)
+	client, err := page.crocManager.CreateCrocClient(options)
 	if err != nil {
 		fyne.Do(func() {
-			tab.statusLabel.SetText("创建客户端失败: " + err.Error())
+			page.statusLabel.SetText("创建客户端失败: " + err.Error())
 		})
+		// 更新历史记录状态为失败
+		page.updateHistoryItemStatus("failed")
+		// 通知详情页更新状态
+		if page.onUpdateDetail != nil {
+			page.onUpdateDetail("failed", 0.0, "创建客户端失败: "+err.Error())
+		}
 		return
 	}
 
-	tab.crocManager.Log("开始接收文件...")
-	fyne.Do(func() {
-		tab.statusLabel.SetText("正在连接发送方...")
-	})
+	page.crocManager.Log("开始接收文件...")
+
+	// 通知详情页更新状态为接收中
+	if page.onUpdateDetail != nil {
+		page.onUpdateDetail("receiving", 0.1, "正在接收文件...")
+	}
 
 	// 启动接收
 	err = client.Receive()
 	if err != nil {
 		fyne.Do(func() {
-			tab.statusLabel.SetText("接收失败: " + err.Error())
+			page.statusLabel.SetText("接收失败: " + err.Error())
 		})
-		tab.crocManager.Log("接收失败: " + err.Error())
+		page.crocManager.Log("接收失败: " + err.Error())
+		// 更新历史记录状态为失败
+		page.updateHistoryItemStatus("failed")
+		// 通知详情页更新状态
+		if page.onUpdateDetail != nil {
+			page.onUpdateDetail("failed", 0.0, "接收失败: "+err.Error())
+		}
 		return
 	}
 
-	// 接收完成
+	// 计算传输耗时
+	duration := int64(time.Since(startTime).Seconds())
+
+	// 接收完成 - 更新历史记录状态为已完成，并记录耗时
+	page.updateHistoryItemCompleted(duration)
+
+	// 通知详情页更新状态为完成
+	if page.onUpdateDetail != nil {
+		page.onUpdateDetail("completed", 1.0, "接收完成！文件保存在: "+page.savePath)
+	}
+
 	fyne.Do(func() {
-		tab.progressBar.SetValue(1.0)
-		tab.statusLabel.SetText("接收完成！文件保存在: " + tab.savePath)
+		page.progressBar.SetValue(1.0)
+		page.statusLabel.SetText("接收完成！文件保存在: " + page.savePath)
 	})
-	tab.crocManager.Log("接收完成")
+	page.crocManager.Log("接收完成")
+
+	// 清空当前记录ID
+	page.currentItemID = ""
 }
 
-func (tab *ReceiveTab) simulateProgress() {
-	steps := 10
-	for i := 0; i <= steps; i++ {
-		select {
-		case <-tab.crocManager.GetContext().Done():
-			return
-		default:
-			progress := float64(i) / float64(steps)
-			tab.progressBar.SetValue(progress)
+// createReceiveHistoryItem 创建接收历史记录
+func (page *ReceivePage) createReceiveHistoryItem(code string) (string, error) {
+	item := storage.HistoryItem{
+		Type:       "receive",
+		FileName:   "等待接收文件信息",
+		FileSize:   "未知",
+		Code:       code,
+		Status:     "in_progress",
+		Timestamp:  time.Now(),
+		Duration:   0,
+		ClientInfo: "接收端",
+		NumFiles:   0,
+	}
 
-			if i < steps {
-				tab.statusLabel.SetText(fmt.Sprintf("接收进度: %.1f%%", progress*100))
-			}
+	return page.historyStorage.Add(item)
+}
 
-			// 模拟接收延迟
-			// time.Sleep(time.Millisecond * 300)
-		}
+// updateHistoryItemStatus 更新历史记录状态
+func (page *ReceivePage) updateHistoryItemStatus(status string) {
+	if page.currentItemID == "" {
+		return
+	}
+
+	err := page.historyStorage.Update(page.currentItemID, func(item *storage.HistoryItem) {
+		item.Status = status
+	})
+	if err != nil {
+		page.crocManager.Log("更新历史记录状态失败: " + err.Error())
+	}
+}
+
+// updateHistoryItemCompleted 更新历史记录为完成状态
+func (page *ReceivePage) updateHistoryItemCompleted(duration int64) {
+	if page.currentItemID == "" {
+		return
+	}
+
+	err := page.historyStorage.Update(page.currentItemID, func(item *storage.HistoryItem) {
+		item.Status = "completed"
+		item.Duration = duration
+		// 这里可以进一步更新文件信息，但需要更复杂的实现
+		// 目前保持基础信息
+	})
+	if err != nil {
+		page.crocManager.Log("更新历史记录完成状态失败: " + err.Error())
 	}
 }

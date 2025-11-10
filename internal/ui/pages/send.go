@@ -15,7 +15,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/schollz/croc/v10/src/croc"
 	"github.com/shapled/mocroc/internal/crocmgr"
-	"github.com/shapled/mocroc/internal/types"
+	"github.com/shapled/mocroc/internal/storage"
 )
 
 const (
@@ -23,9 +23,10 @@ const (
 	sendTextMode = "文本"
 )
 
-type SendTab struct {
+type SendPage struct {
 	crocManager *crocmgr.Manager
 	window      fyne.Window
+	storage     *storage.HistoryStorage
 
 	// 回调函数
 	onNavigateToDetail func()
@@ -60,18 +61,22 @@ type SendTab struct {
 	codePhrase     string
 	currentMode    string
 	isTransferring bool
-	isActive       bool
 	isCancelled    bool // 取消标志
+
+	// 历史记录相关
+	currentHistoryID string
+	sendStartTime    time.Time
 
 	// 容器
 	content fyne.CanvasObject
 }
 
-func NewSendTab(crocManager *crocmgr.Manager, window fyne.Window) *SendTab {
+func NewSendTab(crocManager *crocmgr.Manager, window fyne.Window, a fyne.App) *SendPage {
 	rand.Seed(time.Now().UnixNano())
-	tab := &SendTab{
+	tab := &SendPage{
 		crocManager: crocManager,
 		window:      window,
+		storage:     storage.NewHistoryStorage(a),
 		currentMode: sendFileMode,
 	}
 	tab.createWidgets()
@@ -79,36 +84,36 @@ func NewSendTab(crocManager *crocmgr.Manager, window fyne.Window) *SendTab {
 	return tab
 }
 
-func (tab *SendTab) SetOnNavigateToDetail(callback func()) {
-	tab.onNavigateToDetail = callback
+func (page *SendPage) SetOnNavigateToDetail(callback func()) {
+	page.onNavigateToDetail = callback
 }
 
-func (tab *SendTab) SetOnUpdateDetail(callback func(state string, progress float64, message string)) {
-	tab.onUpdateDetail = callback
+func (page *SendPage) SetOnUpdateDetail(callback func(state string, progress float64, message string)) {
+	page.onUpdateDetail = callback
 }
 
 // GetSendData 获取发送数据用于详情页
-func (tab *SendTab) GetSendData() (fileName string, code string, isText bool) {
-	if tab.currentMode == sendTextMode {
+func (page *SendPage) GetSendData() (fileName string, code string, isText bool) {
+	if page.currentMode == sendTextMode {
 		fileName = "文本内容"
 		isText = true
-	} else if len(tab.selectedFiles) > 0 {
-		fileName = filepath.Base(tab.selectedFiles[0])
+	} else if len(page.selectedFiles) > 0 {
+		fileName = filepath.Base(page.selectedFiles[0])
 		isText = false
 	}
-	code = tab.codePhrase
+	code = page.codePhrase
 	return
 }
 
 // GetIsTransferring 获取传输状态
-func (tab *SendTab) GetIsTransferring() bool {
-	return tab.isTransferring
+func (page *SendPage) GetIsTransferring() bool {
+	return page.isTransferring
 }
 
-func (tab *SendTab) createWidgets() {
+func (page *SendPage) createWidgets() {
 	// --- File Widgets ---
-	tab.fileList = widget.NewList(
-		func() int { return len(tab.selectedFiles) },
+	page.fileList = widget.NewList(
+		func() int { return len(page.selectedFiles) },
 		func() fyne.CanvasObject {
 			return container.NewHBox(widget.NewLabel(""), widget.NewButtonWithIcon("", theme.DeleteIcon(), nil))
 		},
@@ -116,374 +121,442 @@ func (tab *SendTab) createWidgets() {
 			c := obj.(*fyne.Container)
 			label := c.Objects[0].(*widget.Label)
 			btn := c.Objects[1].(*widget.Button)
-			if id < len(tab.selectedFiles) {
-				label.SetText(filepath.Base(tab.selectedFiles[id]))
+			if id < len(page.selectedFiles) {
+				label.SetText(filepath.Base(page.selectedFiles[id]))
 			}
-			btn.OnTapped = func() { tab.deleteFile(id) }
+			btn.OnTapped = func() { page.deleteFile(id) }
 		},
 	)
-	tab.fileList.Resize(fyne.NewSize(400, 200)) // 设置最小高度
-	tab.addFilesBtn = widget.NewButtonWithIcon("选择文件或文件夹", theme.FileIcon(), tab.onAddFiles)
+	page.fileList.Resize(fyne.NewSize(400, 200)) // 设置最小高度
+	page.addFilesBtn = widget.NewButtonWithIcon("选择文件或文件夹", theme.FileIcon(), page.onAddFiles)
 
 	// --- Text Widgets ---
-	tab.textEntry = widget.NewMultiLineEntry()
-	tab.textEntry.SetPlaceHolder("输入要发送的文本内容...")
-	tab.textEntry.Resize(fyne.NewSize(400, 150)) // 设置一个合适的高度
-	tab.textEntry.OnChanged = func(s string) {
-		tab.sendText = s
-		tab.updateSendButton()
+	page.textEntry = widget.NewMultiLineEntry()
+	page.textEntry.SetPlaceHolder("输入要发送的文本内容...")
+	page.textEntry.Resize(fyne.NewSize(400, 150)) // 设置一个合适的高度
+	page.textEntry.OnChanged = func(s string) {
+		page.sendText = s
+		page.updateSendButton()
 	}
 
 	// --- Common Widgets ---
-	tab.sendBtn = widget.NewButtonWithIcon("开始发送", theme.MailSendIcon(), tab.onSend)
-	tab.cancelBtn = widget.NewButtonWithIcon("取消发送", theme.CancelIcon(), tab.onCancel)
-	tab.cancelBtn.Hide()
-	tab.sendBtn.Disable()
+	page.sendBtn = widget.NewButtonWithIcon("开始发送", theme.MailSendIcon(), page.onSend)
+	page.cancelBtn = widget.NewButtonWithIcon("取消发送", theme.CancelIcon(), page.onCancel)
+	page.cancelBtn.Hide()
+	page.sendBtn.Disable()
 
-	tab.codeLabel = widget.NewLabel("等待生成接收码...")
-	tab.progressBar = widget.NewProgressBar()
-	tab.statusLabel = widget.NewLabel("准备就绪")
+	page.codeLabel = widget.NewLabel("等待生成接收码...")
+	page.progressBar = widget.NewProgressBar()
+	page.statusLabel = widget.NewLabel("准备就绪")
 
 	// --- Advanced Options ---
-	tab.disableLocalCheck = widget.NewCheck("禁用本地传输", nil)
-	tab.compressCheck = widget.NewCheck("自动压缩文件夹", nil)
-	tab.relayEntry = widget.NewEntry()
-	tab.relayEntry.SetText("croc.schollz.com")
-	tab.passwordEntry = widget.NewPasswordEntry()
-	tab.passwordEntry.SetText("pass123")
+	page.disableLocalCheck = widget.NewCheck("禁用本地传输", nil)
+	page.compressCheck = widget.NewCheck("自动压缩文件夹", nil)
+	page.relayEntry = widget.NewEntry()
+	page.relayEntry.SetText("croc.schollz.com")
+	page.passwordEntry = widget.NewPasswordEntry()
+	page.passwordEntry.SetText("pass123")
 
 	relayForm := widget.NewForm(
-		&widget.FormItem{Text: "中继地址:", Widget: tab.relayEntry},
-		&widget.FormItem{Text: "密码:", Widget: tab.passwordEntry},
+		&widget.FormItem{Text: "中继地址:", Widget: page.relayEntry},
+		&widget.FormItem{Text: "密码:", Widget: page.passwordEntry},
 	)
 
-	tab.advancedCard = widget.NewCard("", "", container.NewVBox(
-		tab.compressCheck,
-		tab.disableLocalCheck,
+	page.advancedCard = widget.NewCard("", "", container.NewVBox(
+		page.compressCheck,
+		page.disableLocalCheck,
 		relayForm,
 	))
-	tab.advancedCard.Hide()
+	page.advancedCard.Hide()
 
-	tab.advancedCheck = widget.NewCheck("高级选项", func(checked bool) {
+	page.advancedCheck = widget.NewCheck("高级选项", func(checked bool) {
 		if checked {
-			tab.advancedCard.Show()
+			page.advancedCard.Show()
 		} else {
-			tab.advancedCard.Hide()
+			page.advancedCard.Hide()
 		}
 	})
 
 	// --- Mode Selection (at the end) ---
-	tab.modeRadio = widget.NewRadioGroup([]string{sendFileMode, sendTextMode}, func(selected string) {
-		tab.currentMode = selected
-		tab.updateSendModeUI()
-		tab.updateSendButton()
+	page.modeRadio = widget.NewRadioGroup([]string{sendFileMode, sendTextMode}, func(selected string) {
+		page.currentMode = selected
+		page.updateSendModeUI()
+		page.updateSendButton()
 	})
 }
 
-func (tab *SendTab) buildContent() {
+func (page *SendPage) buildContent() {
 	// --- File Content Area ---
-	tab.fileContent = container.NewVBox(
-		tab.addFilesBtn,
+	page.fileContent = container.NewVBox(
+		page.addFilesBtn,
 		widget.NewLabel("已选择的文件:"),
-		tab.fileList,
+		page.fileList,
 	)
 
 	// --- Text Content Area ---
-	tab.textContent = container.NewVBox(
+	page.textContent = container.NewVBox(
 		widget.NewLabel("输入文本:"),
-		tab.textEntry,
+		page.textEntry,
 	)
-	tab.textContent.Hide() // Initially hidden
+	page.textContent.Hide() // Initially hidden
 
 	// --- Pre-Send Card ---
-	tab.preSendCard = widget.NewCard("发送前设置", "", container.NewVBox(
-		widget.NewCard("选择模式", "", tab.modeRadio),
-		tab.fileContent,
-		tab.textContent,
-		tab.advancedCheck,
-		tab.advancedCard,
-		tab.sendBtn,
+	page.preSendCard = widget.NewCard("", "", container.NewVBox(
+		widget.NewCard("选择模式", "", page.modeRadio),
+		page.fileContent,
+		page.textContent,
+		page.advancedCheck,
+		page.advancedCard,
+		page.sendBtn,
 	))
 
 	// --- Post-Send Card ---
 	qrSection := container.NewVBox(
 		widget.NewLabel("接收码:"),
-		tab.codeLabel,
-		widget.NewButton("显示二维码", tab.onShowQRCode),
+		page.codeLabel,
+		widget.NewButton("显示二维码", page.onShowQRCode),
 	)
 
-	tab.postSendCard = widget.NewCard("发送中", "", container.NewVBox(
+	page.postSendCard = widget.NewCard("发送中", "", container.NewVBox(
 		widget.NewCard("接收信息", "", qrSection),
-		container.NewHBox(tab.cancelBtn),
+		container.NewHBox(page.cancelBtn),
 		widget.NewSeparator(),
 		widget.NewCard("传输状态", "", container.NewVBox(
-			tab.progressBar,
-			tab.statusLabel,
+			page.progressBar,
+			page.statusLabel,
 		)),
 	))
-	tab.postSendCard.Hide()
+	page.postSendCard.Hide()
 
 	// --- Final Layout ---
 	mainContent := container.NewVBox(
-		tab.preSendCard,
-		tab.postSendCard,
+		page.preSendCard,
+		page.postSendCard,
 	)
 
 	// 使用边框布局让内容能够更好地填充空间
-	tab.content = container.NewScroll(mainContent)
+	page.content = container.NewScroll(mainContent)
 
 	// Set initial state after all content is built
-	tab.modeRadio.SetSelected(sendFileMode)
+	page.modeRadio.SetSelected(sendFileMode)
 }
 
-func (tab *SendTab) updateSendModeUI() {
-	if tab.currentMode == sendFileMode {
-		tab.fileContent.Show()
-		tab.textContent.Hide()
-		tab.compressCheck.Show()
+func (page *SendPage) updateSendModeUI() {
+	if page.currentMode == sendFileMode {
+		page.fileContent.Show()
+		page.textContent.Hide()
+		page.compressCheck.Show()
 	} else {
-		tab.fileContent.Hide()
-		tab.textContent.Show()
-		tab.compressCheck.Hide()
+		page.fileContent.Hide()
+		page.textContent.Show()
+		page.compressCheck.Hide()
 	}
 }
 
-func (tab *SendTab) Build() fyne.CanvasObject {
-	return tab.content
+func (page *SendPage) Build() fyne.CanvasObject {
+	return page.content
 }
 
-func (tab *SendTab) GetState() types.TabState {
-	if tab.isTransferring {
-		return types.TabStateSending
-	}
-	return types.TabStateIdle
-}
-
-func (tab *SendTab) IsActive() bool {
-	return tab.isActive
-}
-
-func (tab *SendTab) SetActive(active bool) {
-	tab.isActive = active
-}
-
-func (tab *SendTab) Cancel() error {
-	if !tab.isTransferring {
+func (page *SendPage) Cancel() error {
+	if !page.isTransferring {
 		return fmt.Errorf("没有正在进行的发送任务")
 	}
-	tab.onCancel()
+	page.onCancel()
 	return nil
 }
 
 // --- Event Handlers ---
 
-func (tab *SendTab) onAddFiles() {
+func (page *SendPage) onAddFiles() {
 	dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
 		if err != nil || reader == nil {
 			return
 		}
 		defer reader.Close()
 		path := reader.URI().Path()
-		tab.selectedFiles = append(tab.selectedFiles, path)
+		page.selectedFiles = append(page.selectedFiles, path)
 		fyne.Do(func() {
-			tab.fileList.Refresh()
-			tab.updateSendButton()
-			tab.statusLabel.SetText(fmt.Sprintf("已添加 %d 个文件", len(tab.selectedFiles)))
+			page.fileList.Refresh()
+			page.updateSendButton()
+			page.statusLabel.SetText(fmt.Sprintf("已添加 %d 个文件", len(page.selectedFiles)))
 		})
-	}, tab.window)
+	}, page.window)
 }
 
-func (tab *SendTab) onSend() {
-	if (tab.currentMode == sendFileMode && len(tab.selectedFiles) == 0) ||
-		(tab.currentMode == sendTextMode && tab.sendText == "") {
-		tab.statusLabel.SetText("请先选择文件或输入文本")
+func (page *SendPage) onSend() {
+	if page.currentMode == sendFileMode && len(page.selectedFiles) == 0 {
+		page.statusLabel.SetText("请先选择文件")
+		return
+	}
+
+	if page.currentMode == sendTextMode && page.sendText == "" {
+		page.statusLabel.SetText("请先输入文本")
 		return
 	}
 
 	// 生成接收码
-	code, err := tab.generateCode()
+	code, err := page.generateCode()
 	if err != nil {
-		tab.statusLabel.SetText("生成接收码失败: " + err.Error())
+		page.statusLabel.SetText("生成接收码失败: " + err.Error())
 		return
 	}
-	tab.codePhrase = code
+	page.codePhrase = code
+
+	// 创建历史记录
+	historyItem := page.createHistoryItem(code)
+	if historyItem == nil {
+		page.statusLabel.SetText("创建历史记录失败")
+		return
+	}
 
 	// 先导航到详情页（此时状态还是 Idle，允许导航）
-	if tab.onNavigateToDetail != nil {
-		tab.onNavigateToDetail()
+	if page.onNavigateToDetail != nil {
+		page.onNavigateToDetail()
 	}
 
 	// 然后设置传输状态
-	tab.isTransferring = true
+	page.isTransferring = true
+	page.sendStartTime = time.Now()
 
 	// 在后台开始发送
-	go tab.startSending()
+	go page.startSending()
 }
 
-func (tab *SendTab) onCancel() {
-	if !tab.isTransferring {
+func (page *SendPage) onCancel() {
+	if !page.isTransferring {
 		return
 	}
-	tab.statusLabel.SetText("正在取消发送...")
+	page.statusLabel.SetText("正在取消发送...")
 	// 更新详情页状态为取消中
-	if tab.onUpdateDetail != nil {
-		tab.onUpdateDetail("cancelled", 0.0, "正在取消发送...")
+	if page.onUpdateDetail != nil {
+		page.onUpdateDetail("cancelled", 0.0, "正在取消发送...")
 	}
 
 	// 设置取消标志
-	tab.isCancelled = true
+	page.isCancelled = true
 
 	// 取消 croc 管理器的 context
-	tab.crocManager.Cancel()
+	page.crocManager.Cancel()
 
 	// 不立即重置状态，等待发送进程检测到取消信号
 	fyne.Do(func() {
-		tab.statusLabel.SetText("发送已取消")
+		page.statusLabel.SetText("发送已取消")
 		// 更新详情页状态为已取消
-		if tab.onUpdateDetail != nil {
-			tab.onUpdateDetail("cancelled", 0.0, "发送已取消")
+		if page.onUpdateDetail != nil {
+			page.onUpdateDetail("cancelled", 0.0, "发送已取消")
 		}
 	})
 }
 
-func (tab *SendTab) resetSendState() {
-	tab.isTransferring = false
-	tab.isCancelled = false // 重置取消标志
+func (page *SendPage) resetSendState() {
+	page.isTransferring = false
+	page.isCancelled = false // 重置取消标志
 	fyne.Do(func() {
-		tab.preSendCard.Show()
-		tab.postSendCard.Hide()
-		tab.progressBar.SetValue(0.0)
-		tab.codePhrase = ""
-		tab.codeLabel.SetText("等待生成接收码...")
+		page.preSendCard.Show()
+		page.postSendCard.Hide()
+		page.progressBar.SetValue(0.0)
+		page.codePhrase = ""
+		page.codeLabel.SetText("等待生成接收码...")
 	})
 }
 
-func (tab *SendTab) deleteFile(index int) {
-	if index < 0 || index >= len(tab.selectedFiles) {
+func (page *SendPage) deleteFile(index int) {
+	if index < 0 || index >= len(page.selectedFiles) {
 		return
 	}
-	tab.selectedFiles = append(tab.selectedFiles[:index], tab.selectedFiles[index+1:]...)
+	page.selectedFiles = append(page.selectedFiles[:index], page.selectedFiles[index+1:]...)
 	fyne.Do(func() {
-		tab.fileList.Refresh()
-		tab.updateSendButton()
-		tab.statusLabel.SetText(fmt.Sprintf("已删除文件，剩余 %d 个", len(tab.selectedFiles)))
+		page.fileList.Refresh()
+		page.updateSendButton()
+		page.statusLabel.SetText(fmt.Sprintf("已删除文件，剩余 %d 个", len(page.selectedFiles)))
 	})
 }
 
-func (tab *SendTab) onShowQRCode() {
+func (page *SendPage) onShowQRCode() {
 	// Placeholder
 }
 
 // --- Helper Functions ---
 
-func (tab *SendTab) updateSendButton() {
+func (page *SendPage) updateSendButton() {
 	enabled := false
-	if !tab.isTransferring {
-		if tab.currentMode == sendFileMode && len(tab.selectedFiles) > 0 {
+	if !page.isTransferring {
+		if page.currentMode == sendFileMode && len(page.selectedFiles) > 0 {
 			enabled = true
-		} else if tab.currentMode == sendTextMode && strings.TrimSpace(tab.sendText) != "" {
+		} else if page.currentMode == sendTextMode && strings.TrimSpace(page.sendText) != "" {
 			enabled = true
 		}
 	}
 
 	if enabled {
-		tab.sendBtn.Enable()
+		page.sendBtn.Enable()
 	} else {
-		tab.sendBtn.Disable()
+		page.sendBtn.Disable()
 	}
 }
 
-func (tab *SendTab) generateCode() (string, error) {
-	adjectives := []string{"red", "blue", "green", "yellow", "orange", "purple", "pink", "brown"}
-	animals := []string{"cat", "dog", "frog", "bird", "fish", "lion", "tiger", "bear"}
-	adj := adjectives[rand.Intn(len(adjectives))]
-	ani := animals[rand.Intn(len(animals))]
+func (page *SendPage) generateCode() (string, error) {
+	// 英语词根列表 - 第一部分 (前缀/形容词)
+	wordRoots1 := []string{
+		"act", "ask", "big", "bold", "bright", "calm", "clear", "cool", "dark", "deep",
+		"easy", "fast", "fine", "flat", "free", "full", "good", "grand", "great", "green",
+		"hard", "high", "honest", "hot", "huge", "kind", "large", "late", "light", "long",
+		"loud", "low", "mad", "main", "new", "nice", "old", "open", "plain", "pure",
+		"quick", "quiet", "rare", "real", "rich", "round", "safe", "sharp", "slow", "soft",
+		"sore", "square", "star", "still", "sweet", "thick", "thin", "tight", "true", "vast",
+		"warm", "weak", "white", "wild", "wise", "young",
+	}
+
+	// 英语词根列表 - 第二部分 (名词/动作)
+	wordRoots2 := []string{
+		"art", "ball", "band", "bank", "base", "bell", "bird", "boat", "body", "book",
+		"box", "boy", "bug", "camp", "car", "card", "care", "case", "cat", "chair",
+		"chance", "change", "charge", "city", "class", "cloud", "coat", "code", "coin", "come",
+		"cook", "copper", "copy", "corn", "cost", "cottage", "cotton", "count", "cover", "crack",
+		"cream", "crop", "cross", "crowd", "crown", "cry", "cup", "curve", "cut", "dance",
+		"day", "deal", "deer", "design", "door", "draw", "dream", "dress", "drop", "drum",
+		"duck", "dust", "earth", "edge", "engine", "event", "face", "fact", "fall", "family",
+		"farm", "father", "fear", "field", "fire", "fish", "flag", "flower", "fly", "forest",
+		"form", "fountain", "fox", "friend", "fruit", "game", "garden", "gate", "giant", "gift",
+		"girl", "glass", "glove", "gold", "grass", "group", "guide", "hair", "hand", "head",
+		"heart", "hill", "history", "home", "hope", "horn", "horse", "hour", "house", "hunter",
+		"iron", "island", "jack", "jam", "jar", "jet", "job", "join", "judge", "key",
+		"kick", "king", "kiss", "kite", "knife", "lake", "lamp", "land", "language", "leaf",
+		"leg", "letter", "life", "light", "line", "lion", "lock", "look", "love", "machine",
+		"man", "map", "mark", "mask", "match", "meal", "meat", "milk", "mind", "mine",
+		"minute", "mirror", "money", "moon", "morning", "mother", "mountain", "mouth", "music", "name",
+		"nation", "nature", "nerve", "news", "night", "noise", "north", "nose", "note", "number",
+		"ocean", "offer", "office", "orange", "order", "page", "paint", "paper", "park", "part",
+		"pen", "pencil", "person", "picture", "pie", "pilot", "pipe", "place", "plane", "plant",
+		"plate", "play", "point", "pond", "post", "pot", "price", "prince", "prison", "problem",
+		"process", "produce", "queen", "question", "rain", "range", "rate", "ray", "reason", "record",
+		"rest", "rice", "ring", "river", "road", "rock", "roll", "roof", "room", "root",
+		"rose", "rule", "salt", "sand", "scale", "school", "science", "sea", "seat", "seed",
+		"serve", "shade", "shake", "shape", "share", "sheep", "sheet", "ship", "shirt", "shoe",
+		"shop", "show", "side", "sign", "silk", "silver", "sing", "size", "skin", "skirt",
+		"sky", "sleep", "slave", "snow", "soap", "soldier", "son", "song", "sort", "sound",
+		"south", "space", "spare", "speak", "spring", "square", "stamp", "star", "state", "steam",
+		"steel", "step", "stick", "stone", "stop", "store", "storm", "story", "street", "study",
+		"substance", "sugar", "summer", "support", "surprise", "system", "table", "tail", "teacher", "team",
+		"teeth", "temperature", "test", "text", "than", "that", "theft", "theory", "there", "thick",
+		"thing", "thought", "thread", "thrill", "throat", "thumb", "thunder", "ticket", "time", "tin",
+		"tire", "title", "today", "together", "tomorrow", "tone", "tongue", "tooth", "top", "touch",
+		"tower", "town", "trade", "train", "transport", "tray", "tree", "trick", "trip", "trouble",
+		"trousers", "truck", "turn", "twist", "umbrella", "uncle", "under", "unit", "value", "verse",
+		"vessel", "view", "voice", "walk", "wall", "war", "wash", "watch", "water", "wave",
+		"weather", "week", "weight", "west", "wheel", "whip", "whistle", "white", "wide", "wife",
+		"wind", "window", "wing", "winter", "wire", "wise", "woman", "women", "wood", "word",
+		"work", "world", "worm", "wound", "write", "wrong", "year", "yesterday", "young", "youth",
+	}
+
+	// 随机选择词根
+	root1 := wordRoots1[rand.Intn(len(wordRoots1))]
+	root2 := wordRoots2[rand.Intn(len(wordRoots2))]
+
+	// 组合成单词
+	word1 := root1 + root2
+
+	// 生成第二个随机单词
+	root3 := wordRoots1[rand.Intn(len(wordRoots1))]
+	root4 := wordRoots2[rand.Intn(len(wordRoots2))]
+	word2 := root3 + root4
+
+	// 生成随机数字 (100-999)
 	num := rand.Intn(9000) + 1000
-	return fmt.Sprintf("%s-%s-%d", adj, ani, num), nil
+
+	return fmt.Sprintf("%s-%s-%d", word1, word2, num), nil
 }
 
-func (tab *SendTab) startSending() {
-	defer tab.resetSendState()
+func (page *SendPage) startSending() {
+	defer page.resetSendState()
 
 	var sendFiles []string
 	var err error
 
-	if tab.currentMode == sendTextMode {
+	if page.currentMode == sendTextMode {
 		var tmpFile *os.File
-		tmpFile, err = tab.createTextFile(tab.sendText)
+		tmpFile, err = page.createTextFile(page.sendText)
 		if err != nil {
-			fyne.Do(func() { tab.statusLabel.SetText("文本发送失败: " + err.Error()) })
+			fyne.Do(func() { page.statusLabel.SetText("文本发送失败: " + err.Error()) })
 			return
 		}
 		defer os.Remove(tmpFile.Name())
 		sendFiles = []string{tmpFile.Name()}
 	} else {
-		sendFiles = make([]string, len(tab.selectedFiles))
-		copy(sendFiles, tab.selectedFiles)
+		sendFiles = make([]string, len(page.selectedFiles))
+		copy(sendFiles, page.selectedFiles)
 	}
 
-	options := tab.buildCrocOptions()
-	client, err := tab.crocManager.CreateCrocClient(options)
+	options := page.buildCrocOptions()
+	client, err := page.crocManager.CreateCrocClient(options)
 	if err != nil {
-		fyne.Do(func() { tab.statusLabel.SetText("创建客户端失败: " + err.Error()) })
+		fyne.Do(func() { page.statusLabel.SetText("创建客户端失败: " + err.Error()) })
 		return
 	}
 
 	fyne.Do(func() {
-		tab.statusLabel.SetText("等待接收方连接...")
+		page.statusLabel.SetText("等待接收方连接...")
 		// 更新详情页状态为等待连接
-		if tab.onUpdateDetail != nil {
-			tab.onUpdateDetail("waiting", 0.0, "等待接收方连接...")
+		if page.onUpdateDetail != nil {
+			page.onUpdateDetail("waiting", 0.0, "等待接收方连接...")
 		}
+		// 更新历史记录状态
+		page.updateHistoryStatus("waiting", 0.0, "等待接收方连接...")
 	})
 
-	filesInfo, emptyFolders, totalNumberFolders, err := croc.GetFilesInfo(sendFiles, tab.compressCheck.Checked, false, []string{})
+	filesInfo, emptyFolders, totalNumberFolders, err := croc.GetFilesInfo(sendFiles, page.compressCheck.Checked, false, []string{})
 	if err != nil {
 		fyne.Do(func() {
-			tab.statusLabel.SetText("获取文件信息失败: " + err.Error())
-			if tab.onUpdateDetail != nil {
-				tab.onUpdateDetail("failed", 0.0, "获取文件信息失败: "+err.Error())
+			page.statusLabel.SetText("获取文件信息失败: " + err.Error())
+			if page.onUpdateDetail != nil {
+				page.onUpdateDetail("failed", 0.0, "获取文件信息失败: "+err.Error())
 			}
 		})
-		tab.resetSendState()
+		page.resetSendState()
 		return
 	}
 
 	// 开始发送，更新状态
 	fyne.Do(func() {
-		if tab.currentMode == sendTextMode {
-			tab.statusLabel.SetText("正在发送文本...")
-			if tab.onUpdateDetail != nil {
-				tab.onUpdateDetail("sending", 0.0, "正在发送文本...")
+		if page.currentMode == sendTextMode {
+			page.statusLabel.SetText("正在发送文本...")
+			if page.onUpdateDetail != nil {
+				page.onUpdateDetail("sending", 0.0, "正在发送文本...")
 			}
 		} else {
-			tab.statusLabel.SetText("正在发送文件...")
-			if tab.onUpdateDetail != nil {
-				tab.onUpdateDetail("sending", 0.0, "正在发送文件...")
+			page.statusLabel.SetText("正在发送文件...")
+			if page.onUpdateDetail != nil {
+				page.onUpdateDetail("sending", 0.0, "正在发送文件...")
 			}
 		}
+		// 更新历史记录状态为发送中
+		page.updateHistoryStatus("sending", 0.0, "正在发送数据...")
 	})
 
 	// 在单独的 goroutine 中执行发送，以便可以响应取消
 	go func() {
-		defer tab.resetSendState() // 确保状态被重置
+		defer page.resetSendState() // 确保状态被重置
 
 		err := client.Send(filesInfo, emptyFolders, totalNumberFolders)
 		if err != nil {
 			// 检查是否是因为取消导致的错误
-			if tab.isCancelled {
+			if page.isCancelled {
 				fyne.Do(func() {
-					tab.statusLabel.SetText("发送已取消")
-					if tab.onUpdateDetail != nil {
-						tab.onUpdateDetail("cancelled", 0.0, "发送已取消")
+					page.statusLabel.SetText("发送已取消")
+					if page.onUpdateDetail != nil {
+						page.onUpdateDetail("cancelled", 0.0, "发送已取消")
 					}
+					// 更新历史记录状态为已取消
+					page.updateHistoryStatus("cancelled", 0.0, "发送已取消")
 				})
 			} else {
 				fyne.Do(func() {
-					tab.statusLabel.SetText("发送失败: " + err.Error())
-					if tab.onUpdateDetail != nil {
-						tab.onUpdateDetail("failed", 0.0, "发送失败: "+err.Error())
+					page.statusLabel.SetText("发送失败: " + err.Error())
+					if page.onUpdateDetail != nil {
+						page.onUpdateDetail("failed", 0.0, "发送失败: "+err.Error())
 					}
+					// 更新历史记录状态为失败
+					page.updateHistoryStatus("failed", 0.0, "发送失败: "+err.Error())
 				})
 			}
 			return
@@ -491,26 +564,28 @@ func (tab *SendTab) startSending() {
 
 		// 发送成功
 		fyne.Do(func() {
-			tab.progressBar.SetValue(1.0)
-			tab.statusLabel.SetText("发送完成！")
-			if tab.onUpdateDetail != nil {
-				tab.onUpdateDetail("completed", 1.0, "发送完成！")
+			page.progressBar.SetValue(1.0)
+			page.statusLabel.SetText("发送完成！")
+			if page.onUpdateDetail != nil {
+				page.onUpdateDetail("completed", 1.0, "发送完成！")
 			}
+			// 更新历史记录状态为完成
+			page.updateHistoryStatus("completed", 1.0, "发送完成！")
 		})
 	}()
 
 	// 启动进度监控
-	go tab.monitorProgress()
+	go page.monitorProgress()
 }
 
-func (tab *SendTab) monitorProgress() {
+func (page *SendPage) monitorProgress() {
 	// 简化的进度监控 - 只模拟进度，实际状态由发送 goroutine 处理
-	ctx := tab.crocManager.GetContext()
+	ctx := page.crocManager.GetContext()
 	steps := []float64{0.1, 0.3, 0.5, 0.7, 0.9}
 
 	for _, progress := range steps {
 		// 检查取消标志
-		if tab.isCancelled {
+		if page.isCancelled {
 			return
 		}
 
@@ -520,17 +595,17 @@ func (tab *SendTab) monitorProgress() {
 			return
 		case <-time.After(500 * time.Millisecond):
 			// 再次检查取消标志
-			if tab.isCancelled {
+			if page.isCancelled {
 				return
 			}
 
 			// 只有在未取消时才更新进度
-			if !tab.isCancelled {
+			if !page.isCancelled {
 				fyne.Do(func() {
-					tab.progressBar.SetValue(progress)
+					page.progressBar.SetValue(progress)
 					// 更新详情页进度
-					if tab.onUpdateDetail != nil {
-						tab.onUpdateDetail("sending", progress, fmt.Sprintf("发送中... %.1f%%", progress*100))
+					if page.onUpdateDetail != nil {
+						page.onUpdateDetail("sending", progress, fmt.Sprintf("发送中... %.1f%%", progress*100))
 					}
 				})
 			}
@@ -538,25 +613,25 @@ func (tab *SendTab) monitorProgress() {
 	}
 }
 
-func (tab *SendTab) buildCrocOptions() croc.Options {
+func (page *SendPage) buildCrocOptions() croc.Options {
 	return croc.Options{
 		IsSender:      true,
-		SharedSecret:  tab.codePhrase,
+		SharedSecret:  page.codePhrase,
 		Debug:         false,
 		NoPrompt:      true,
 		Stdout:        false,
 		HashAlgorithm: "xxhash",
 		Curve:         "p256",
-		ZipFolder:     tab.compressCheck.Checked,
+		ZipFolder:     page.compressCheck.Checked,
 		OnlyLocal:     false,
-		DisableLocal:  tab.disableLocalCheck.Checked,
-		RelayAddress:  tab.relayEntry.Text,
+		DisableLocal:  page.disableLocalCheck.Checked,
+		RelayAddress:  page.relayEntry.Text,
 		RelayPorts:    []string{"9009", "9010", "9011", "9012", "9013"},
-		RelayPassword: tab.passwordEntry.Text,
+		RelayPassword: page.passwordEntry.Text,
 	}
 }
 
-func (tab *SendTab) createTextFile(textContent string) (*os.File, error) {
+func (page *SendPage) createTextFile(textContent string) (*os.File, error) {
 	tmpFile, err := os.CreateTemp("", "mocroc-text-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("创建临时文件失败: %w", err)
@@ -568,4 +643,99 @@ func (tab *SendTab) createTextFile(textContent string) (*os.File, error) {
 	}
 	tmpFile.Close()
 	return tmpFile, nil
+}
+
+// createHistoryItem 创建历史记录
+func (page *SendPage) createHistoryItem(code string) *storage.HistoryItem {
+	var fileName string
+	var fileSize string
+	var numFiles int
+
+	if page.currentMode == sendFileMode {
+		if len(page.selectedFiles) == 0 {
+			return nil
+		}
+
+		// 获取文件信息
+		var totalSize int64
+		for _, filePath := range page.selectedFiles {
+			info, err := os.Stat(filePath)
+			if err != nil {
+				continue
+			}
+			totalSize += info.Size()
+		}
+
+		if len(page.selectedFiles) == 1 {
+			fileName = filepath.Base(page.selectedFiles[0])
+		} else {
+			fileName = fmt.Sprintf("%d 个文件", len(page.selectedFiles))
+		}
+
+		fileSize = formatFileSize(totalSize)
+		numFiles = len(page.selectedFiles)
+	} else if page.currentMode == sendTextMode {
+		fileName = "文本内容"
+		fileSize = formatFileSize(int64(len(page.sendText)))
+		numFiles = 1
+	} else {
+		return nil
+	}
+
+	// 创建历史记录项
+	historyItem := storage.HistoryItem{
+		Type:       "send",
+		FileName:   fileName,
+		FileSize:   fileSize,
+		Code:       code,
+		Status:     "in_progress",
+		Timestamp:  time.Now(),
+		Duration:   0,
+		ClientInfo: "MoCroc",
+		NumFiles:   numFiles,
+	}
+
+	// 保存到存储
+	recordID, err := page.storage.Add(historyItem)
+	if err != nil {
+		fmt.Printf("保存历史记录失败: %v\n", err)
+		return nil
+	}
+
+	// 保存记录ID供后续更新使用
+	page.currentHistoryID = recordID
+
+	return &historyItem
+}
+
+// updateHistoryStatus 更新历史记录状态
+func (page *SendPage) updateHistoryStatus(status string, progress float64, message string) {
+	if page.currentHistoryID == "" {
+		return
+	}
+
+	duration := time.Since(page.sendStartTime).Seconds()
+
+	err := page.storage.Update(page.currentHistoryID, func(item *storage.HistoryItem) {
+		item.Status = status
+		item.Duration = int64(duration)
+	})
+
+	if err != nil {
+		fmt.Printf("更新历史记录失败: %v\n", err)
+	}
+}
+
+// formatFileSize 格式化文件大小
+func formatFileSize(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }

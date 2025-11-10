@@ -5,11 +5,9 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
 	"github.com/shapled/mocroc/internal/crocmgr"
-	"github.com/shapled/mocroc/internal/types"
+	"github.com/shapled/mocroc/internal/storage"
+	"github.com/shapled/mocroc/internal/ui/components"
 	"github.com/shapled/mocroc/internal/ui/pages"
 )
 
@@ -28,46 +26,44 @@ type MainUI struct {
 	app    fyne.App
 	window fyne.Window
 
-	// Croc 管理器
-	crocManager *crocmgr.Manager
+	// Croc 管理器和存储
+	crocManager    *crocmgr.Manager
+	historyStorage *storage.HistoryStorage
+
+	// 公共属性
+	currentPage PageType
+	topBar      *components.TopBar
+	content     *container.Scroll
 
 	// 页面
-	currentPage       PageType
-	content           *container.Scroll
 	homePage          *pages.HomePage
-	sendTab           *pages.SendTab
-	receiveTab        *pages.ReceiveTab
-	historyTab        *pages.HistoryTab
+	sendPage          *pages.SendPage
+	receivePage       *pages.ReceivePage
+	historyPage       *pages.HistoryPage
 	sendDetailPage    *pages.SendDetailPage
 	receiveDetailPage *pages.ReceiveDetailPage
-
-	// Top Bar
-	backBtn *widget.Button
-	title   *widget.Label
 }
 
 func NewMainUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
 	mainUI := &MainUI{
-		app:         a,
-		window:      w,
-		crocManager: crocmgr.NewManager(),
-		currentPage: PageTypeHome,
+		app:            a,
+		window:         w,
+		crocManager:    crocmgr.NewManager(),
+		historyStorage: storage.NewHistoryStorage(a),
+		currentPage:    PageTypeHome,
 	}
 
 	// 初始化页面
 	mainUI.createPages()
 	mainUI.buildMainWindow()
 
-	return mainUI.buildMainContainer()
+	return container.NewBorder(mainUI.topBar.Container, nil, nil, nil, mainUI.content)
 }
 
 func (ui *MainUI) createPages() {
 	// 创建后退按钮
-	ui.backBtn = widget.NewButtonWithIcon("返回", theme.NavigateBackIcon(), func() {
-		ui.goBack()
-	})
-	ui.backBtn.Hide() // 初始隐藏
-	ui.title = widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	ui.topBar = components.NewTopBar("MoCroc", func() { ui.goBack() })
+	ui.topBar.Hide()
 
 	// 创建首页
 	ui.homePage = pages.NewHomePage(ui.window,
@@ -81,8 +77,8 @@ func (ui *MainUI) createPages() {
 		func() { ui.navigateTo(PageTypeSend) },
 		func() {
 			// 取消发送
-			if ui.sendTab != nil {
-				ui.sendTab.Cancel()
+			if ui.sendPage != nil {
+				ui.sendPage.Cancel()
 			}
 		},
 	)
@@ -91,22 +87,22 @@ func (ui *MainUI) createPages() {
 		func() { ui.navigateTo(PageTypeReceive) },
 		func() {
 			// 取消接收
-			if ui.receiveTab != nil {
-				ui.receiveTab.Cancel()
+			if ui.receivePage != nil {
+				ui.receivePage.Cancel()
 			}
 		},
 	)
 
 	// 创建功能页面
-	ui.sendTab = pages.NewSendTab(ui.crocManager, ui.window)
-	ui.receiveTab = pages.NewReceiveTab(ui.crocManager, ui.window)
-	ui.historyTab = pages.NewHistoryTab()
+	ui.sendPage = pages.NewSendTab(ui.crocManager, ui.window, ui.app)
+	ui.receivePage = pages.NewReceiveTab(ui.crocManager, ui.window, ui.historyStorage)
+	ui.historyPage = pages.NewHistoryPage(ui.historyStorage)
 
 	// 设置导航回调
-	ui.sendTab.SetOnNavigateToDetail(func() {
+	ui.sendPage.SetOnNavigateToDetail(func() {
 		// 设置详情页数据
 		if ui.sendDetailPage != nil {
-			fileName, code, _ := ui.sendTab.GetSendData()
+			fileName, code, _ := ui.sendPage.GetSendData()
 			ui.sendDetailPage.SetFileName(fileName)
 			ui.sendDetailPage.SetCode(code)
 			ui.sendDetailPage.SetState(pages.SendDetailStateWaiting)
@@ -116,32 +112,34 @@ func (ui *MainUI) createPages() {
 	})
 
 	// 设置详情页更新回调
-	ui.sendTab.SetOnUpdateDetail(func(state string, progress float64, message string) {
-		if ui.sendDetailPage != nil {
-			switch state {
-			case "waiting":
-				ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateWaiting, message)
-			case "sending":
-				ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateSending, message)
-				ui.sendDetailPage.SetProgress(progress)
-			case "completed":
-				ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateCompleted, message)
-				ui.sendDetailPage.SetProgress(1.0)
-			case "failed":
-				ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateFailed, message)
-			case "cancelled":
-				ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateCancelled, message)
+	ui.sendPage.SetOnUpdateDetail(func(state string, progress float64, message string) {
+		fyne.Do(func() {
+			if ui.sendDetailPage != nil {
+				switch state {
+				case "waiting":
+					ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateWaiting, message)
+				case "sending":
+					ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateSending, message)
+					ui.sendDetailPage.SetProgress(progress)
+				case "completed":
+					ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateCompleted, message)
+					ui.sendDetailPage.SetProgress(1.0)
+				case "failed":
+					ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateFailed, message)
+				case "cancelled":
+					ui.sendDetailPage.SetStateAndMessage(pages.SendDetailStateCancelled, message)
+				}
+				// 刷新详情页显示
+				ui.content.Refresh()
 			}
-			// 刷新详情页显示
-			ui.content.Refresh()
-		}
+		})
 	})
 
 	// 设置接收页面导航回调
-	ui.receiveTab.SetOnNavigateToDetail(func() {
+	ui.receivePage.SetOnNavigateToDetail(func() {
 		// 设置详情页数据
 		if ui.receiveDetailPage != nil {
-			code, savePath := ui.receiveTab.GetReceiveData()
+			code, savePath := ui.receivePage.GetReceiveData()
 			ui.receiveDetailPage.SetFileName("获取文件信息中...")
 			ui.receiveDetailPage.SetSenderInfo("发送方 (" + code + ")")
 			ui.receiveDetailPage.SetSavePath(savePath)
@@ -149,6 +147,38 @@ func (ui *MainUI) createPages() {
 			ui.receiveDetailPage.SetStatusMessage("正在连接发送方...")
 		}
 		ui.NavigateToReceiveDetail()
+	})
+
+	// 设置接收详情页更新回调
+	ui.receivePage.SetOnUpdateDetail(func(state string, progress float64, message string) {
+		fyne.Do(func() {
+			if ui.receiveDetailPage != nil {
+				switch state {
+				case "connecting":
+					ui.receiveDetailPage.SetState(pages.ReceiveDetailStateConnecting)
+					ui.receiveDetailPage.SetStatusMessage(message)
+					ui.receiveDetailPage.SetProgress(0.0)
+				case "receiving":
+					ui.receiveDetailPage.SetState(pages.ReceiveDetailStateReceiving)
+					ui.receiveDetailPage.SetStatusMessage(message)
+					ui.receiveDetailPage.SetProgress(progress)
+				case "completed":
+					ui.receiveDetailPage.SetState(pages.ReceiveDetailStateCompleted)
+					ui.receiveDetailPage.SetStatusMessage(message)
+					ui.receiveDetailPage.SetProgress(1.0)
+				case "failed":
+					ui.receiveDetailPage.SetState(pages.ReceiveDetailStateFailed)
+					ui.receiveDetailPage.SetStatusMessage(message)
+					ui.receiveDetailPage.SetProgress(0.0)
+				case "cancelled":
+					ui.receiveDetailPage.SetState(pages.ReceiveDetailStateCancelled)
+					ui.receiveDetailPage.SetStatusMessage(message)
+					ui.receiveDetailPage.SetProgress(0.0)
+				}
+				// 刷新详情页显示
+				ui.content.Refresh()
+			}
+		})
 	})
 
 	// 创建内容容器 - 使用滚动容器让内容可以填满空间
@@ -167,92 +197,42 @@ func (ui *MainUI) buildMainWindow() {
 	}
 }
 
-func (ui *MainUI) buildMainContainer() fyne.CanvasObject {
-	headerContainer := container.NewStack(
-		container.NewHBox(ui.backBtn),
-		ui.title,
-	)
-
-	// 主容器 - 使用 Border 让内容填满剩余空间
-	mainContainer := container.NewBorder(headerContainer, nil, nil, nil, ui.content)
-
-	return mainContainer
-}
-
 func (ui *MainUI) navigateTo(pageType PageType) {
-	// 检查是否可以导航（例如传输过程中不能切换）
-	if !ui.canNavigateFromCurrentPage() {
-		return
-	}
-
 	ui.currentPage = pageType
 	ui.updateContent()
-}
-
-func (ui *MainUI) canNavigateFromCurrentPage() bool {
-	// 检查传输状态
-	if ui.sendTab.GetState() == types.TabStateSending {
-		dialog.ShowInformation("提示", "正在发送，请先取消后再切换页面", ui.window)
-		return false
-	}
-	if ui.receiveTab.GetState() == types.TabStateReceiving {
-		dialog.ShowInformation("提示", "正在接收，请先取消后再切换页面", ui.window)
-		return false
-	}
-	return true
-}
-
-func (ui *MainUI) SetTitle(title string) {
-	if ui.title != nil {
-		ui.title.SetText(title)
-	}
 }
 
 func (ui *MainUI) updateContent() {
 	var content fyne.CanvasObject
 
 	switch ui.currentPage {
-	case PageTypeHome:
-		ui.SetTitle("MoCroc")
-		content = ui.homePage.Build()
-		ui.backBtn.Hide()
-		ui.sendTab.SetActive(false)
-		ui.receiveTab.SetActive(false)
-		ui.historyTab.SetActive(false)
 	case PageTypeSend:
-		ui.SetTitle("发送")
-		content = ui.sendTab.Build()
-		ui.backBtn.Show()
-		ui.sendTab.SetActive(true)
-		ui.receiveTab.SetActive(false)
-		ui.historyTab.SetActive(false)
+		ui.topBar.SetTitle("发送")
+		ui.topBar.Show()
+		content = ui.sendPage.Build()
 	case PageTypeSendDetail:
-		ui.SetTitle("发送详情")
+		ui.topBar.SetTitle("发送详情")
+		ui.topBar.Show()
 		content = ui.sendDetailPage.Build()
-		ui.backBtn.Show()
 	case PageTypeReceive:
-		ui.SetTitle("接收")
-		content = ui.receiveTab.Build()
-		ui.backBtn.Show()
-		ui.sendTab.SetActive(false)
-		ui.receiveTab.SetActive(true)
-		ui.historyTab.SetActive(false)
+		ui.topBar.SetTitle("接收")
+		ui.topBar.Show()
+		content = ui.receivePage.Build()
 	case PageTypeReceiveDetail:
-		ui.SetTitle("接收详情")
+		ui.topBar.SetTitle("接收详情")
+		ui.topBar.Show()
 		content = ui.receiveDetailPage.Build()
-		ui.backBtn.Show()
 	case PageTypeHistory:
-		ui.SetTitle("历史")
-		content = ui.historyTab.Build()
-		ui.backBtn.Show()
-		ui.sendTab.SetActive(false)
-		ui.receiveTab.SetActive(false)
-		ui.historyTab.SetActive(true)
-		ui.historyTab.Refresh()
+		ui.topBar.SetTitle("历史")
+		ui.topBar.Show()
+		content = ui.historyPage.Build()
+		ui.historyPage.Refresh()
+	case PageTypeHome:
+		fallthrough
 	default:
-		ui.SetTitle("MoCroc")
+		ui.topBar.SetTitle("MoCroc")
+		ui.topBar.Hide()
 		content = ui.homePage.Build()
-		ui.backBtn.Hide()
 	}
 
 	ui.content.Content = content

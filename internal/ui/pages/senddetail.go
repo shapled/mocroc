@@ -41,50 +41,50 @@ func NewSendDetailPage(window fyne.Window, onBack, onCancel func()) *SendDetailP
 	}
 }
 
-func (p *SendDetailPage) SetFileName(name string) {
-	p.fileName = name
+func (page *SendDetailPage) SetFileName(name string) {
+	page.fileName = name
 }
 
-func (p *SendDetailPage) SetCode(code string) {
-	p.code = code
+func (page *SendDetailPage) SetCode(code string) {
+	page.code = code
 }
 
-func (p *SendDetailPage) SetState(state SendDetailState) {
-	p.state = state
+func (page *SendDetailPage) SetState(state SendDetailState) {
+	page.state = state
 }
 
-func (p *SendDetailPage) SetStatusMessage(msg string) {
-	p.statusMsg = msg
+func (page *SendDetailPage) SetStatusMessage(msg string) {
+	page.statusMsg = msg
 }
 
 // SetStateAndMessage 同时设置状态和消息
-func (p *SendDetailPage) SetStateAndMessage(state SendDetailState, message string) {
-	p.state = state
-	p.statusMsg = message
+func (page *SendDetailPage) SetStateAndMessage(state SendDetailState, message string) {
+	page.state = state
+	page.statusMsg = message
 }
 
 // SetProgress 设置进度
-func (p *SendDetailPage) SetProgress(progress float64) {
-	p.progress = progress
+func (page *SendDetailPage) SetProgress(progress float64) {
+	page.progress = progress
 }
 
-func (p *SendDetailPage) Build() fyne.CanvasObject {
+func (page *SendDetailPage) Build() fyne.CanvasObject {
 	// 信息卡片
 	infoCard := widget.NewCard("传输信息", "", container.NewVBox(
-		p.createInfoRow("文件:", p.fileName, "准备中..."),
-		p.createInfoRow("接收码:", p.code, "生成中..."),
-		p.createInfoRow("状态:", p.getStateText(), ""),
+		page.createInfoRow("文件:", page.fileName, "准备中..."),
+		page.createInfoRow("接收码:", page.code, "生成中..."),
+		page.createInfoRow("状态:", page.getStateText(), ""),
 	))
 
 	// 进度卡片
 	var progressCard fyne.CanvasObject
-	switch p.state {
+	switch page.state {
 	case SendDetailStateSending:
 		progressBar := widget.NewProgressBar()
-		progressBar.SetValue(p.progress)
+		progressBar.SetValue(page.progress)
 		progressCard = widget.NewCard("传输进度", "", container.NewVBox(
 			progressBar,
-			widget.NewLabel(fmt.Sprintf("%.1f%%", p.progress*100)),
+			widget.NewLabel(fmt.Sprintf("%.1f%%", page.progress*100)),
 		))
 	case SendDetailStateWaiting:
 		// 等待状态显示无限进度条
@@ -98,39 +98,34 @@ func (p *SendDetailPage) Build() fyne.CanvasObject {
 	}
 
 	// 状态消息
-	if p.statusMsg == "" {
-		p.statusMsg = "准备发送..."
+	if page.statusMsg == "" {
+		page.statusMsg = "准备发送..."
 	}
-	statusCard := widget.NewCard("状态信息", "", widget.NewLabel(p.statusMsg))
+	statusCard := widget.NewCard("状态信息", "", widget.NewLabel(page.statusMsg))
 
 	// 操作按钮
 	var actionButton *widget.Button
-	switch p.state {
+	switch page.state {
 	case SendDetailStatePreparing, SendDetailStateWaiting, SendDetailStateSending:
-		actionButton = widget.NewButtonWithIcon("取消发送", theme.CancelIcon(), p.onCancel)
+		actionButton = widget.NewButtonWithIcon("取消发送", theme.CancelIcon(), page.onCancel)
 	case SendDetailStateCompleted:
-		actionButton = widget.NewButtonWithIcon("完成", theme.ConfirmIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("完成", theme.ConfirmIcon(), page.onBack)
 		actionButton.Importance = widget.HighImportance
 	case SendDetailStateFailed, SendDetailStateCancelled:
-		actionButton = widget.NewButtonWithIcon("重新发送", theme.ViewRefreshIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("重新发送", theme.ViewRefreshIcon(), page.onBack)
 		actionButton.Importance = widget.MediumImportance
 	default:
-		actionButton = widget.NewButtonWithIcon("返回", theme.NavigateBackIcon(), p.onBack)
+		actionButton = widget.NewButtonWithIcon("返回", theme.NavigateBackIcon(), page.onBack)
 	}
 
 	actionCard := widget.NewCard("操作", "", actionButton)
 
 	// 主内容 - 使用边框布局让内容更好地填充空间
 	mainContent := container.NewVBox(
-		widget.NewLabel(""),
 		infoCard,
-		widget.NewLabel(""),
 		progressCard,
-		widget.NewLabel(""),
 		statusCard,
-		widget.NewLabel(""),
 		actionCard,
-		widget.NewLabel(""), // 底部间距
 	)
 
 	// 使用滚动容器
@@ -138,7 +133,7 @@ func (p *SendDetailPage) Build() fyne.CanvasObject {
 }
 
 // createInfoRow 创建信息行
-func (p *SendDetailPage) createInfoRow(label, value, placeholder string) fyne.CanvasObject {
+func (page *SendDetailPage) createInfoRow(label, value, placeholder string) fyne.CanvasObject {
 	labelWidget := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	valueWidget := widget.NewLabel(value)
@@ -149,8 +144,8 @@ func (p *SendDetailPage) createInfoRow(label, value, placeholder string) fyne.Ca
 	return container.NewHBox(labelWidget, valueWidget)
 }
 
-func (p *SendDetailPage) getStateText() string {
-	switch p.state {
+func (page *SendDetailPage) getStateText() string {
+	switch page.state {
 	case SendDetailStatePreparing:
 		return "准备中"
 	case SendDetailStateWaiting:
