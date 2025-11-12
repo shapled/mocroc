@@ -115,7 +115,9 @@ func (page *SendPage) createWidgets() {
 	page.fileList = widget.NewList(
 		func() int { return len(page.selectedFiles) },
 		func() fyne.CanvasObject {
-			return container.NewHBox(widget.NewLabel(""), widget.NewButtonWithIcon("", theme.DeleteIcon(), nil))
+			deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
+			deleteBtn.Resize(fyne.NewSize(44, 44)) // 移动端最小触摸区域
+			return container.NewHBox(widget.NewLabel(""), deleteBtn)
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
 			c := obj.(*fyne.Container)
@@ -129,6 +131,8 @@ func (page *SendPage) createWidgets() {
 	)
 	page.fileList.Resize(fyne.NewSize(400, 200)) // 设置最小高度
 	page.addFilesBtn = widget.NewButtonWithIcon("选择文件或文件夹", theme.FileIcon(), page.onAddFiles)
+	page.addFilesBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.addFilesBtn.Importance = widget.HighImportance
 
 	// --- Text Widgets ---
 	page.textEntry = widget.NewMultiLineEntry()
@@ -141,7 +145,12 @@ func (page *SendPage) createWidgets() {
 
 	// --- Common Widgets ---
 	page.sendBtn = widget.NewButtonWithIcon("开始发送", theme.MailSendIcon(), page.onSend)
+	page.sendBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.sendBtn.Importance = widget.HighImportance
+
 	page.cancelBtn = widget.NewButtonWithIcon("取消发送", theme.CancelIcon(), page.onCancel)
+	page.cancelBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.cancelBtn.Importance = widget.MediumImportance
 	page.cancelBtn.Hide()
 	page.sendBtn.Disable()
 
@@ -189,43 +198,65 @@ func (page *SendPage) buildContent() {
 	// --- File Content Area ---
 	page.fileContent = container.NewVBox(
 		page.addFilesBtn,
-		widget.NewLabel("已选择的文件:"),
+		widget.NewLabel(""), // 间距
+		widget.NewLabelWithStyle("已选择的文件:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel(""), // 小间距
 		page.fileList,
 	)
 
 	// --- Text Content Area ---
 	page.textContent = container.NewVBox(
-		widget.NewLabel("输入文本:"),
+		widget.NewLabelWithStyle("输入文本:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel(""), // 小间距
 		page.textEntry,
 	)
 	page.textContent.Hide() // Initially hidden
 
 	// --- Pre-Send Card ---
-	page.preSendCard = widget.NewCard("", "", container.NewVBox(
-		widget.NewCard("选择模式", "", page.modeRadio),
+	page.preSendCard = widget.NewCard("发送设置", "", container.NewPadded(container.NewVBox(
+		widget.NewCard("传输模式", "", container.NewPadded(page.modeRadio)),
+		widget.NewLabel(""), // 间距
 		page.fileContent,
 		page.textContent,
+		widget.NewLabel(""), // 间距
 		page.advancedCheck,
+		widget.NewLabel(""), // 小间距
 		page.advancedCard,
-		page.sendBtn,
-	))
+		widget.NewLabel(""), // 大间距
+		container.NewCenter(page.sendBtn),
+	)))
 
 	// --- Post-Send Card ---
 	qrSection := container.NewVBox(
-		widget.NewLabel("接收码:"),
+		widget.NewLabelWithStyle("接收码:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel(""), // 小间距
 		page.codeLabel,
-		widget.NewButton("显示二维码", page.onShowQRCode),
+		widget.NewLabel(""), // 间距
+		widget.NewButtonWithIcon("显示二维码", theme.InfoIcon(), page.onShowQRCode),
 	)
 
-	page.postSendCard = widget.NewCard("发送中", "", container.NewVBox(
-		widget.NewCard("接收信息", "", qrSection),
-		container.NewHBox(page.cancelBtn),
+	// 发送状态图标
+	sendIcon := widget.NewLabelWithStyle("📤", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	sendIconContainer := container.NewCenter(sendIcon)
+
+	// 增强的传输状态显示
+	progressDetails := container.NewVBox(
+		page.statusLabel,
+		widget.NewLabel(""), // 间距
+		page.progressBar,
+	)
+
+	page.postSendCard = widget.NewCard("发送中", "", container.NewPadded(container.NewVBox(
+		sendIconContainer,
+		widget.NewLabel(""), // 间距
+		widget.NewCard("接收信息", "", container.NewPadded(qrSection)),
+		widget.NewLabel(""), // 间距
+		container.NewCenter(page.cancelBtn),
+		widget.NewLabel(""), // 间距
 		widget.NewSeparator(),
-		widget.NewCard("传输状态", "", container.NewVBox(
-			page.progressBar,
-			page.statusLabel,
-		)),
-	))
+		widget.NewLabel(""), // 间距
+		widget.NewCard("传输状态", "", container.NewPadded(progressDetails)),
+	)))
 	page.postSendCard.Hide()
 
 	// --- Final Layout ---
@@ -234,8 +265,9 @@ func (page *SendPage) buildContent() {
 		page.postSendCard,
 	)
 
-	// 使用边框布局让内容能够更好地填充空间
-	page.content = container.NewScroll(mainContent)
+	// 添加内边距并使用滚动容器
+	paddedContent := container.NewPadded(mainContent)
+	page.content = container.NewScroll(paddedContent)
 
 	// Set initial state after all content is built
 	page.modeRadio.SetSelected(sendFileMode)

@@ -33,6 +33,7 @@ type MainUI struct {
 	// 公共属性
 	currentPage PageType
 	topBar      *components.TopBar
+	bottomNav   *components.BottomNavigation
 	content     *container.Scroll
 
 	// 页面
@@ -57,13 +58,28 @@ func NewMainUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
 	mainUI.createPages()
 	mainUI.buildMainWindow()
 
-	return container.NewBorder(mainUI.topBar.Container, nil, nil, nil, mainUI.content)
+	// 创建布局：顶部导航栏 + 内容 + 底部导航栏
+	return container.NewBorder(mainUI.topBar.Container, mainUI.bottomNav.Container(), nil, nil, mainUI.content)
 }
 
 func (ui *MainUI) createPages() {
 	// 创建后退按钮
 	ui.topBar = components.NewTopBar("MoCroc", func() { ui.goBack() })
 	ui.topBar.Hide()
+
+	// 创建底部导航栏
+	ui.bottomNav = components.NewBottomNavigation(func(pageType string) {
+		switch pageType {
+		case "home":
+			ui.navigateTo(PageTypeHome)
+		case "send":
+			ui.navigateTo(PageTypeSend)
+		case "receive":
+			ui.navigateTo(PageTypeReceive)
+		case "history":
+			ui.navigateTo(PageTypeHistory)
+		}
+	})
 
 	// 创建首页
 	ui.homePage = pages.NewHomePage(ui.window,
@@ -209,22 +225,30 @@ func (ui *MainUI) updateContent() {
 	case PageTypeSend:
 		ui.topBar.SetTitle("发送")
 		ui.topBar.Show()
+		ui.bottomNav.Show()
+		ui.bottomNav.SetActivePage("send")
 		content = ui.sendPage.Build()
 	case PageTypeSendDetail:
 		ui.topBar.SetTitle("发送详情")
 		ui.topBar.Show()
+		ui.bottomNav.Hide() // 详情页隐藏底部导航
 		content = ui.sendDetailPage.Build()
 	case PageTypeReceive:
 		ui.topBar.SetTitle("接收")
 		ui.topBar.Show()
+		ui.bottomNav.Show()
+		ui.bottomNav.SetActivePage("receive")
 		content = ui.receivePage.Build()
 	case PageTypeReceiveDetail:
 		ui.topBar.SetTitle("接收详情")
 		ui.topBar.Show()
+		ui.bottomNav.Hide() // 详情页隐藏底部导航
 		content = ui.receiveDetailPage.Build()
 	case PageTypeHistory:
 		ui.topBar.SetTitle("历史")
 		ui.topBar.Show()
+		ui.bottomNav.Show()
+		ui.bottomNav.SetActivePage("history")
 		content = ui.historyPage.Build()
 		ui.historyPage.Refresh()
 	case PageTypeHome:
@@ -232,6 +256,8 @@ func (ui *MainUI) updateContent() {
 	default:
 		ui.topBar.SetTitle("MoCroc")
 		ui.topBar.Hide()
+		ui.bottomNav.Show()
+		ui.bottomNav.SetActivePage("home")
 		content = ui.homePage.Build()
 	}
 

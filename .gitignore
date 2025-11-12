@@ -1,2 +1,6 @@
 .ai
 /croc
+
+/tmp
+.DS_Store
+/mocroc

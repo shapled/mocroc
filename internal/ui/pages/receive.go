@@ -81,16 +81,27 @@ func (page *ReceivePage) GetIsReceiving() bool {
 func (page *ReceivePage) createWidgets() {
 	// 接收方式选择
 	page.scanBtn = widget.NewButtonWithIcon("📷 扫描二维码", theme.SearchIcon(), page.onScanQR)
+	page.scanBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.scanBtn.Importance = widget.HighImportance
+
 	page.codeEntry = widget.NewEntry()
-	page.codeEntry.SetPlaceHolder("或手动输入接收码")
+	page.codeEntry.SetPlaceHolder("请输入接收码")
+	page.codeEntry.Resize(fyne.NewSize(280, 48)) // 移动端标准尺寸
 
 	// 保存位置
 	page.savePathLabel = widget.NewLabel(page.savePath)
 	page.savePathBtn = widget.NewButtonWithIcon("选择保存位置", theme.FolderIcon(), page.onSelectSavePath)
+	page.savePathBtn.Resize(fyne.NewSize(200, 48)) // 符合移动端标准
 
 	// 下载和取消按钮
 	page.downloadBtn = widget.NewButtonWithIcon("开始接收", theme.DownloadIcon(), page.onDownload)
+	page.downloadBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.downloadBtn.Importance = widget.HighImportance
+	page.downloadBtn.Disable() // 初始状态禁用，需要输入接收码
+
 	page.cancelBtn = widget.NewButtonWithIcon("取消接收", theme.CancelIcon(), page.onCancel)
+	page.cancelBtn.Resize(fyne.NewSize(280, 56)) // 移动端标准尺寸
+	page.cancelBtn.Importance = widget.MediumImportance
 	page.cancelBtn.Hide()
 
 	// 进度显示
@@ -99,59 +110,118 @@ func (page *ReceivePage) createWidgets() {
 }
 
 func (page *ReceivePage) buildPreReceiveContent() fyne.CanvasObject {
-	// 接收码输入区域
-	codeSection := container.NewVBox(
+	// 创建标题区域
+	titleLabel := widget.NewLabelWithStyle("准备接收文件", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	subtitleLabel := widget.NewLabelWithStyle("扫描发送方的二维码或手动输入接收码", fyne.TextAlignCenter, fyne.TextStyle{})
+
+	// 创建图标/插图区域
+	iconLabel := widget.NewLabelWithStyle("📱", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	iconContainer := container.NewCenter(iconLabel)
+
+	// 主要操作按钮 - 扫一扫
+	scanContainer := container.NewVBox(
 		page.scanBtn,
-		widget.NewForm(
-			&widget.FormItem{Text: "接收码:", Widget: page.codeEntry},
-		),
 	)
 
-	// 保存位置选择
+	// 分隔线
+	divider := container.NewCenter(widget.NewLabel("—— 或手动输入 ——"))
+
+	// 接收码输入区域 - 居中显示
+	codeContainer := container.NewCenter(
+		page.codeEntry,
+	)
+
+	// 确认接收按钮
+	confirmContainer := container.NewVBox(
+		page.downloadBtn,
+	)
+
+	// 设置接收码输入变化时的验证
+	page.codeEntry.OnChanged = func(s string) {
+		// 启用/禁用下载按钮
+		if len(strings.TrimSpace(s)) >= 3 { // 最少3个字符才能启用
+			page.downloadBtn.Enable()
+		} else {
+			page.downloadBtn.Disable()
+		}
+	}
+
+	// 保存位置区域
 	saveSection := container.NewHBox(
 		page.savePathBtn,
 		page.savePathLabel,
 	)
 
-	// 操作按钮
-	actionSection := container.NewVBox(
-		page.downloadBtn,
-	)
+	// 帮助文本
+	helpText := widget.NewLabelWithStyle("接收码由发送方提供\n有效期为 10 分钟", fyne.TextAlignCenter, fyne.TextStyle{})
+	helpText.Importance = widget.MediumImportance
 
-	// 主要内容
+	// 将所有内容垂直排列，添加适当的间距
 	mainContent := container.NewVBox(
-		widget.NewCard("接收方式", "", codeSection),
-		widget.NewCard("保存设置", "", saveSection),
-		widget.NewCard("操作", "", actionSection),
+		iconContainer,
+		widget.NewLabel(""), // 间距
+		titleLabel,
+		widget.NewLabel(""), // 间距
+		subtitleLabel,
+		widget.NewLabel(""), // 大间距
+		widget.NewLabel(""), // 大间距
+		scanContainer,
+		widget.NewLabel(""), // 间距
+		divider,
+		widget.NewLabel(""), // 间距
+		codeContainer,
+		widget.NewLabel(""), // 间距
+		confirmContainer,
+		widget.NewLabel(""), // 大间距
+		widget.NewLabel(""), // 大间距
+		widget.NewCard("保存设置", "", container.NewPadded(saveSection)),
+		widget.NewLabel(""), // 间距
+		helpText,
 	)
 
-	// 添加一些垂直间距
-	contentWithSpacing := container.NewVBox(
-		mainContent,
-	)
+	// 添加内边距
+	paddedContent := container.NewPadded(mainContent)
 
-	return container.NewScroll(contentWithSpacing)
+	return container.NewScroll(paddedContent)
 }
 
 func (page *ReceivePage) buildPostReceiveContent() fyne.CanvasObject {
-	// 传输状态卡片
-	statusCard := widget.NewCard("传输状态", "", container.NewVBox(
-		page.progressBar,
+	// 状态图标
+	statusIcon := widget.NewLabelWithStyle("⏳", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	statusIconContainer := container.NewCenter(statusIcon)
+
+	// 传输状态卡片 - 增强显示
+	statusDetails := container.NewVBox(
 		page.statusLabel,
-	))
+		widget.NewLabel(""), // 间距
+		page.progressBar,
+	)
+
+	statusCard := widget.NewCard("传输状态", "", container.NewPadded(statusDetails))
 
 	// 操作按钮
 	actionSection := container.NewVBox(
 		page.cancelBtn,
 	)
 
-	// 主要内容
+	// 进度详情（如果需要显示更多信息）
+	progressInfo := container.NewCenter(widget.NewLabel("正在接收文件..."))
+
+	// 主要内容 - 改进布局
 	mainContent := container.NewVBox(
+		statusIconContainer,
+		widget.NewLabel(""), // 间距
 		statusCard,
-		widget.NewCard("操作", "", actionSection),
+		widget.NewLabel(""), // 间距
+		progressInfo,
+		widget.NewLabel(""), // 间距
+		widget.NewCard("操作", "", container.NewPadded(actionSection)),
 	)
 
-	return container.NewScroll(mainContent)
+	// 添加内边距
+	paddedContent := container.NewPadded(mainContent)
+
+	return container.NewScroll(paddedContent)
 }
 
 func (page *ReceivePage) buildContent() {
@@ -182,16 +252,16 @@ func (page *ReceivePage) refreshDisplay() {
 // 事件处理器
 func (page *ReceivePage) onScanQR() {
 	if page.isReceiving {
-		page.statusLabel.SetText("接收中，无法扫描二维码")
+		page.statusLabel.SetText("⚠️ 正在接收文件，请完成后再尝试扫描")
 		return
 	}
 	// TODO: 实现二维码扫描
-	page.statusLabel.SetText("二维码扫描功能待实现")
+	page.statusLabel.SetText("📷 二维码扫描功能开发中，请使用手动输入")
 }
 
 func (page *ReceivePage) onSelectSavePath() {
 	if page.isReceiving {
-		page.statusLabel.SetText("接收中，无法更改保存位置")
+		page.statusLabel.SetText("⚠️ 正在接收文件，无法更改保存位置")
 		return
 	}
 
@@ -202,19 +272,19 @@ func (page *ReceivePage) onSelectSavePath() {
 
 		page.savePath = reader.Path()
 		page.savePathLabel.SetText(page.savePath)
-		page.statusLabel.SetText("保存位置已更新")
+		page.statusLabel.SetText("✅ 保存位置已更新")
 	}, page.window)
 }
 
 func (page *ReceivePage) onDownload() {
 	if page.isReceiving {
-		page.statusLabel.SetText("正在接收中，请等待完成")
+		page.statusLabel.SetText("⏳ 正在接收中，请等待当前任务完成")
 		return
 	}
 
 	code := strings.TrimSpace(page.codeEntry.Text)
 	if code == "" {
-		page.statusLabel.SetText("请先输入接收码")
+		page.statusLabel.SetText("❌ 请先输入接收码")
 		return
 	}
 
